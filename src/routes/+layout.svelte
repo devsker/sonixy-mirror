@@ -139,12 +139,15 @@
 		background-color: var(--bg-color);
 		color: var(--text-color);
 		overflow: hidden;
-		user-select: none;
-		-webkit-user-select: none;
 	}
 
 	:global(a), :global(img) {
 		-webkit-user-drag: none;
+	}
+
+	:global(input), :global(textarea), :global(select) {
+		user-select: text;
+		-webkit-user-select: text;
 	}
 
 	/* Transition management */
@@ -161,6 +164,8 @@
 		flex-direction: column;
 		height: 100vh;
 		width: 100vw;
+		user-select: none;
+		-webkit-user-select: none;
 	}
 
 	.app-layout {
