@@ -73,6 +73,7 @@
 					class="icon-btn" 
 					class:active={page.url.pathname === '/'} 
 					title="Collections"
+					draggable="false"
 				>
 					<Library size={24} strokeWidth={2} />
 				</a>
@@ -84,6 +85,7 @@
 					class="icon-btn" 
 					class:active={page.url.pathname === '/settings'} 
 					title="Settings"
+					draggable="false"
 				>
 					<Settings size={24} strokeWidth={2} />
 				</a>
@@ -137,6 +139,12 @@
 		background-color: var(--bg-color);
 		color: var(--text-color);
 		overflow: hidden;
+		user-select: none;
+		-webkit-user-select: none;
+	}
+
+	:global(a), :global(img) {
+		-webkit-user-drag: none;
 	}
 
 	/* Transition management */
