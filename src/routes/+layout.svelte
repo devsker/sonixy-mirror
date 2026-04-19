@@ -2,7 +2,53 @@
 	import { Library, Settings } from 'lucide-svelte';
 	import { page } from '$app/state';
 	import Titlebar from '$lib/components/Titlebar.svelte';
+	import { onMount, setContext } from 'svelte';
+	
 	let { children } = $props();
+
+	// Use a reactive object for the theme state to ensure context consumers stay in sync
+	const themeState = $state({
+		value: 'system'
+	});
+
+	function applyTheme(value) {
+		const root = document.documentElement;
+		root.classList.remove('light', 'dark');
+
+		if (value === 'system') {
+			const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+			root.classList.add(systemDark ? 'dark' : 'light');
+		} else {
+			root.classList.add(value);
+		}
+	}
+
+	onMount(() => {
+		const savedTheme = localStorage.getItem('theme') || 'system';
+		themeState.value = savedTheme;
+		applyTheme(themeState.value);
+		
+		// Remove no-transitions class after initial theme application
+		setTimeout(() => {
+			document.documentElement.classList.remove('no-transitions');
+		}, 0);
+
+		const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+		const handler = () => {
+			if (themeState.value === 'system') applyTheme('system');
+		};
+		mediaQuery.addEventListener('change', handler);
+		return () => mediaQuery.removeEventListener('change', handler);
+	});
+
+	$effect(() => {
+		const val = themeState.value;
+		localStorage.setItem('theme', val);
+		applyTheme(val);
+	});
+
+	// Provide the reactive state object directly
+	setContext('theme-context', themeState);
 </script>
 
 <div class="app-container">
@@ -79,7 +125,15 @@
 		background-color: var(--bg-color);
 		color: var(--text-color);
 		overflow: hidden;
-		transition: background-color 0.2s, color 0.2s;
+	}
+
+	/* Transition management */
+	:global(html:not(.no-transitions) body),
+	:global(html:not(.no-transitions) .sidebar),
+	:global(html:not(.no-transitions) .icon-btn),
+	:global(html:not(.no-transitions) .content),
+	:global(html:not(.no-transitions) .titlebar) {
+		transition: background-color 0.2s, color 0.2s, border-color 0.2s;
 	}
 
 	.app-container {
@@ -92,7 +146,7 @@
 	.app-layout {
 		display: flex;
 		flex: 1;
-		min-height: 0; /* Important for flex child with overflow */
+		min-height: 0;
 	}
 
 	.sidebar {
@@ -104,7 +158,7 @@
 		align-items: center;
 		padding: 12px 0;
 		border-right: 1px solid var(--border-color);
-		transition: background-color 0.2s, border-color 0.2s;
+		flex-shrink: 0;
 	}
 
 	.top-icons,
@@ -126,7 +180,6 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		transition: color 0.2s;
 		position: relative;
 		text-decoration: none;
 	}
@@ -154,7 +207,6 @@
 		background-color: var(--bg-color);
 		overflow: auto;
 		padding: 24px;
-		transition: background-color 0.2s;
 	}
 </style>
 

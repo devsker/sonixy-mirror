@@ -1,39 +1,13 @@
 <script>
-	import { onMount } from 'svelte';
+	import { getContext } from 'svelte';
 
-	let theme = $state('system');
+	const themeState = getContext('theme-context');
 
-	onMount(() => {
-		const savedTheme = localStorage.getItem('theme') || 'system';
-		theme = savedTheme;
-	});
-
-	$effect(() => {
-		localStorage.setItem('theme', theme);
-		applyTheme(theme);
-	});
-
-	function applyTheme(value) {
-		const root = document.documentElement;
-		root.classList.remove('light', 'dark');
-
-		if (value === 'system') {
-			const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-			root.classList.add(systemDark ? 'dark' : 'light');
-		} else {
-			root.classList.add(value);
-		}
+	let theme = $derived(themeState.value);
+	
+	function handleThemeChange(e) {
+		themeState.value = e.target.value;
 	}
-
-	// Listen for system theme changes if set to 'system'
-	onMount(() => {
-		const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-		const handler = () => {
-			if (theme === 'system') applyTheme('system');
-		};
-		mediaQuery.addEventListener('change', handler);
-		return () => mediaQuery.removeEventListener('change', handler);
-	});
 </script>
 
 <h1>Settings</h1>
@@ -44,7 +18,7 @@
 		<div class="setting-item">
 			<label for="theme">Color Theme</label>
 			<div class="select-wrapper">
-				<select id="theme" bind:value={theme}>
+				<select id="theme" value={theme} onchange={handleThemeChange}>
 					<option value="system">System Default</option>
 					<option value="dark">Dark</option>
 					<option value="light">Light</option>

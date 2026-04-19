@@ -39,14 +39,18 @@
 <style>
 	.titlebar {
 		height: 30px;
+		width: 100%;
+		flex-shrink: 0;
 		background: var(--sidebar-bg);
 		user-select: none;
 		display: flex;
+		flex-direction: row;
 		justify-content: space-between;
 		align-items: center;
 		border-bottom: 1px solid var(--border-color);
 		z-index: 1000;
-		transition: background-color 0.2s, border-color 0.2s;
+		overflow: hidden;
+		box-sizing: border-box;
 	}
 
 	.title {
@@ -57,11 +61,17 @@
 		letter-spacing: 0.05em;
 		text-transform: uppercase;
 		cursor: default;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		flex: 1;
 	}
 
 	.controls {
 		display: flex;
+		flex-direction: row;
 		height: 100%;
+		flex-shrink: 0;
 	}
 
 	.control-btn {
@@ -75,6 +85,7 @@
 		color: var(--icon-color);
 		cursor: default;
 		transition: background-color 0.1s, color 0.1s;
+		box-sizing: border-box;
 	}
 
 	.control-btn:hover {
