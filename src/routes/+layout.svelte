@@ -1,39 +1,41 @@
 <script>
 	import { Library, Settings } from 'lucide-svelte';
 	import { page } from '$app/state';
+	import Titlebar from '$lib/components/Titlebar.svelte';
 	let { children } = $props();
 </script>
 
-<div class="app-layout">
-	<aside class="sidebar">
-		<div class="top-icons">
-			<a 
-				href="/"
-				class="icon-btn" 
-				class:active={page.url.pathname === '/'} 
-				title="Collections"
-			>
-				<Library size={24} strokeWidth={2} />
-			</a>
-		</div>
+<div class="app-container">
+	<Titlebar />
+	<div class="app-layout">
+		<aside class="sidebar">
+			<div class="top-icons">
+				<a 
+					href="/"
+					class="icon-btn" 
+					class:active={page.url.pathname === '/'} 
+					title="Collections"
+				>
+					<Library size={24} strokeWidth={2} />
+				</a>
+			</div>
 
-		<div class="bottom-icons">
-			<a 
-				href="/settings"
-				class="icon-btn" 
-				class:active={page.url.pathname === '/settings'} 
-				title="Settings"
-			>
-				<Settings size={24} strokeWidth={2} />
-			</a>
-		</div>
-	</aside>
+			<div class="bottom-icons">
+				<a 
+					href="/settings"
+					class="icon-btn" 
+					class:active={page.url.pathname === '/settings'} 
+					title="Settings"
+				>
+					<Settings size={24} strokeWidth={2} />
+				</a>
+			</div>
+		</aside>
 
-
-
-	<main class="content">
-		{@render children()}
-	</main>
+		<main class="content">
+			{@render children()}
+		</main>
+	</div>
 </div>
 
 <style>
@@ -80,10 +82,17 @@
 		transition: background-color 0.2s, color 0.2s;
 	}
 
-	.app-layout {
+	.app-container {
 		display: flex;
+		flex-direction: column;
 		height: 100vh;
 		width: 100vw;
+	}
+
+	.app-layout {
+		display: flex;
+		flex: 1;
+		min-height: 0; /* Important for flex child with overflow */
 	}
 
 	.sidebar {
