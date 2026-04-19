@@ -22,7 +22,9 @@
 </script>
 
 <div data-tauri-drag-region class="titlebar">
-	<div data-tauri-drag-region class="title">Sonixy</div>
+	<div data-tauri-drag-region class="title-section">
+		<span class="title">Sonixy</span>
+	</div>
 	<div class="controls">
 		<button class="control-btn" onclick={minimize} aria-label="Minimize">
 			<Minus size={14} />
@@ -45,7 +47,8 @@
 		user-select: none;
 		display: flex;
 		flex-direction: row;
-		justify-content: space-between;
+		flex-wrap: nowrap;
+		justify-content: flex-start;
 		align-items: center;
 		border-bottom: 1px solid var(--border-color);
 		z-index: 1000;
@@ -53,8 +56,16 @@
 		box-sizing: border-box;
 	}
 
-	.title {
+	.title-section {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		height: 100%;
+		min-width: 0;
 		padding-left: 12px;
+	}
+
+	.title {
 		font-size: 11px;
 		font-weight: 500;
 		color: var(--text-muted);
@@ -64,12 +75,12 @@
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
-		flex: 1;
 	}
 
 	.controls {
 		display: flex;
 		flex-direction: row;
+		flex-wrap: nowrap;
 		height: 100%;
 		flex-shrink: 0;
 	}

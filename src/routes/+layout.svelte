@@ -6,9 +6,10 @@
 	
 	let { children } = $props();
 
-	// Use a reactive object for the theme state to ensure context consumers stay in sync
-	const themeState = $state({
-		value: 'system'
+	// Use a reactive object for the settings state to ensure context consumers stay in sync
+	const settingsState = $state({
+		theme: 'system',
+		showCheckboxes: false
 	});
 
 	function applyTheme(value) {
@@ -24,9 +25,18 @@
 	}
 
 	onMount(() => {
-		const savedTheme = localStorage.getItem('theme') || 'system';
-		themeState.value = savedTheme;
-		applyTheme(themeState.value);
+		const savedSettings = localStorage.getItem('settings');
+		if (savedSettings) {
+			try {
+				const parsed = JSON.parse(savedSettings);
+				settingsState.theme = parsed.theme || 'system';
+				settingsState.showCheckboxes = parsed.showCheckboxes ?? false;
+			} catch (e) {
+				console.error('Failed to parse settings', e);
+			}
+		}
+		
+		applyTheme(settingsState.theme);
 		
 		// Remove no-transitions class after initial theme application
 		setTimeout(() => {
@@ -35,20 +45,22 @@
 
 		const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
 		const handler = () => {
-			if (themeState.value === 'system') applyTheme('system');
+			if (settingsState.theme === 'system') applyTheme('system');
 		};
 		mediaQuery.addEventListener('change', handler);
 		return () => mediaQuery.removeEventListener('change', handler);
 	});
 
 	$effect(() => {
-		const val = themeState.value;
-		localStorage.setItem('theme', val);
-		applyTheme(val);
+		localStorage.setItem('settings', JSON.stringify({
+			theme: settingsState.theme,
+			showCheckboxes: settingsState.showCheckboxes
+		}));
+		applyTheme(settingsState.theme);
 	});
 
 	// Provide the reactive state object directly
-	setContext('theme-context', themeState);
+	setContext('settings-context', settingsState);
 </script>
 
 <div class="app-container">
@@ -205,8 +217,8 @@
 	.content {
 		flex: 1;
 		background-color: var(--bg-color);
-		overflow: auto;
-		padding: 24px;
+		overflow: hidden;
+		padding: 0;
 	}
 </style>
 

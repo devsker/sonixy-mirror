@@ -1,40 +1,68 @@
 <script>
 	import { getContext } from 'svelte';
 
-	const themeState = getContext('theme-context');
+	const settings = getContext('settings-context');
 
-	let theme = $derived(themeState.value);
+	let theme = $derived(settings.theme);
+	let showCheckboxes = $derived(settings.showCheckboxes);
 	
 	function handleThemeChange(e) {
-		themeState.value = e.target.value;
+		settings.theme = e.target.value;
+	}
+
+	function handleCheckboxToggle(e) {
+		settings.showCheckboxes = e.target.checked;
 	}
 </script>
 
-<h1>Settings</h1>
+<div class="settings-page">
+	<h1>Settings</h1>
 
-<div class="settings-container">
-	<section class="settings-section">
-		<h2>General</h2>
-		<div class="setting-item">
-			<label for="theme">Color Theme</label>
-			<div class="select-wrapper">
-				<select id="theme" value={theme} onchange={handleThemeChange}>
-					<option value="system">System Default</option>
-					<option value="dark">Dark</option>
-					<option value="light">Light</option>
-				</select>
+	<div class="settings-container">
+		<section class="settings-section">
+			<h2>Interface</h2>
+			
+			<div class="setting-item">
+				<label for="theme">Color Theme</label>
+				<div class="select-wrapper">
+					<select id="theme" value={theme} onchange={handleThemeChange}>
+						<option value="system">System Default</option>
+						<option value="dark">Dark</option>
+						<option value="light">Light</option>
+					</select>
+				</div>
+				<p class="description">Select the theme that Sonixy will use for the interface.</p>
 			</div>
-			<p class="description">Select the theme that Sonixy will use for the interface.</p>
-		</div>
-	</section>
 
-	<section class="settings-section">
-		<h2>About</h2>
-		<p>Sonixy v0.1.0</p>
-	</section>
+			<div class="setting-item">
+				<div class="checkbox-setting">
+					<label class="custom-checkbox">
+						<input 
+							type="checkbox" 
+							id="showCheckboxes" 
+							checked={showCheckboxes} 
+							onchange={handleCheckboxToggle} 
+						/>
+						<span class="checkmark"></span>
+					</label>
+					<label for="showCheckboxes" class="checkbox-label">Show Selection Checkboxes</label>
+				</div>
+				<p class="description">Show or hide the selection checkboxes in the file list.</p>
+			</div>
+		</section>
+
+		<section class="settings-section">
+			<h2>About</h2>
+			<p>Sonixy v0.1.0</p>
+		</section>
+	</div>
 </div>
 
 <style>
+	.settings-page {
+		padding: 24px;
+	}
+
 	.settings-container {
 		display: flex;
 		flex-direction: column;
@@ -55,6 +83,18 @@
 		display: flex;
 		flex-direction: column;
 		gap: 8px;
+		margin-bottom: 24px;
+	}
+
+	.checkbox-setting {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
+
+	.checkbox-label {
+		font-size: 0.95rem;
+		cursor: pointer;
 	}
 
 	.description {
@@ -72,9 +112,9 @@
 	select {
 		appearance: none;
 		width: 100%;
-		background-color: #2d2d2d;
-		color: #e1e1e1;
-		border: 1px solid #454545;
+		background-color: var(--sidebar-bg);
+		color: var(--text-color);
+		border: 1px solid var(--border-color);
 		padding: 10px 14px;
 		border-radius: 4px;
 		font-size: 0.9rem;
@@ -84,15 +124,14 @@
 	}
 
 	select:hover {
-		border-color: #666;
+		border-color: var(--icon-color);
 	}
 
 	select:focus {
-		border-color: #007acc;
+		border-color: var(--icon-active);
 		box-shadow: 0 0 0 2px rgba(0, 122, 204, 0.3);
 	}
 
-	/* Custom arrow for the dropdown */
 	.select-wrapper::after {
 		content: '▼';
 		font-size: 0.7rem;
@@ -101,12 +140,68 @@
 		top: 50%;
 		transform: translateY(-50%);
 		pointer-events: none;
-		color: #888;
+		color: var(--text-muted);
 	}
 
-	option {
-		background-color: #2d2d2d;
-		color: #e1e1e1;
-		padding: 8px;
+	/* Custom Checkbox */
+	.custom-checkbox {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		position: relative;
+		cursor: pointer;
+		user-select: none;
+		width: 18px;
+		height: 18px;
+	}
+
+	.custom-checkbox input {
+		position: absolute;
+		opacity: 0;
+		cursor: pointer;
+		height: 0;
+		width: 0;
+	}
+
+	.checkmark {
+		position: absolute;
+		top: 0;
+		left: 0;
+		height: 18px;
+		width: 18px;
+		background-color: transparent;
+		border: 1.5px solid var(--icon-color);
+		border-radius: 3px;
+		transition: all 0.2s;
+	}
+
+	.custom-checkbox:hover input ~ .checkmark {
+		border-color: var(--icon-active);
+	}
+
+	.custom-checkbox input:checked ~ .checkmark {
+		background-color: var(--icon-active);
+		border-color: var(--icon-active);
+	}
+
+	.checkmark:after {
+		content: '';
+		position: absolute;
+		display: none;
+	}
+
+	.custom-checkbox input:checked ~ .checkmark:after {
+		display: block;
+		left: 6px;
+		top: 2px;
+		width: 4px;
+		height: 9px;
+		border: solid white;
+		border-width: 0 2px 2px 0;
+		transform: rotate(45deg);
+	}
+
+	:global(html.dark) .custom-checkbox input:checked ~ .checkmark:after {
+		border-color: #1e1e1e;
 	}
 </style>

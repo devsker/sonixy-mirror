@@ -1,1 +1,5 @@
-<h1>Collections</h1>
+<script>
+	import FileList from '$lib/components/FileList.svelte';
+</script>
+
+<FileList />
