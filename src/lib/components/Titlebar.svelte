@@ -53,6 +53,10 @@
         const delta = e.deltaY > 0 ? -0.05 : 0.05;
         audioPlayer.setVolume(audioPlayer.volume + delta);
     }
+
+    function blur(e: MouseEvent) {
+        (e.currentTarget as HTMLElement).blur();
+    }
 </script>
 
 <svelte:window onclick={closeTasks} />
@@ -63,10 +67,10 @@
 	</div>
 
     <div class="playback-controls">
-        <button class="playback-btn" onclick={() => audioPlayer.previous()} aria-label="Previous">
+        <button class="playback-btn" onclick={(e) => { audioPlayer.previous(); blur(e); }} aria-label="Previous">
             <SkipBack size={14} fill="currentColor" />
         </button>
-        <button class="playback-btn play-pause" onclick={() => audioPlayer.toggle()} aria-label={isPlaying ? 'Pause' : 'Play'}>
+        <button class="playback-btn play-pause" onclick={(e) => { audioPlayer.toggle(); blur(e); }} aria-label={isPlaying ? 'Pause' : 'Play'}>
             {#if isWaitingToReplay}
                 <svg width="18" height="18" viewBox="0 0 18 18">
                     <circle 
@@ -93,12 +97,12 @@
                 <Play size={16} fill="currentColor" />
             {/if}
         </button>
-        <button class="playback-btn" onclick={() => audioPlayer.next()} aria-label="Next">
+        <button class="playback-btn" onclick={(e) => { audioPlayer.next(); blur(e); }} aria-label="Next">
             <SkipForward size={14} fill="currentColor" />
         </button>
 
         <div class="volume-control" onwheel={handleVolumeWheel}>
-            <button class="playback-btn volume-btn" onclick={() => audioPlayer.toggleMute()}>
+            <button class="playback-btn volume-btn" onclick={(e) => { audioPlayer.toggleMute(); blur(e); }}>
                 {#if volume === 0}
                     <VolumeX size={14} />
                 {:else if volume < 0.5}

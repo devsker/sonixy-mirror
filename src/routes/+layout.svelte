@@ -6,10 +6,24 @@
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import DropPrompt from '$lib/components/DropPrompt.svelte';
 	import { collectionStore } from '$lib/collection-store.svelte';
+	import { audioPlayer } from '$lib/audio-player.svelte';
 	
 	import { settingsStore } from '$lib/settings-store.svelte';
 	
 	let { children } = $props();
+
+	function handleKeydown(e: KeyboardEvent) {
+		if (e.code === 'Space') {
+			// Don't toggle if we're in an input or textarea
+			const target = e.target as HTMLElement;
+			if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+				return;
+			}
+			
+			e.preventDefault();
+			audioPlayer.toggle();
+		}
+	}
 
 	let dropPaths = $state<string[]>([]);
 	let showDropPrompt = $state(false);
@@ -41,6 +55,10 @@
 		showDropPrompt = false;
 		collectionStore.pendingRelocate = null;
 		dropPaths = [];
+	}
+
+	function closeDropPrompt() {
+		if (showDropPrompt) handleDropCancel();
 	}
 
 	function applyTheme(value: string) {
@@ -78,6 +96,8 @@
 	// Provide the reactive state object directly
 	setContext('settings-context', settingsStore);
 </script>
+
+<svelte:window onkeydown={handleKeydown} onclick={closeDropPrompt} />
 
 <div class="app-container">
 	<Titlebar />
