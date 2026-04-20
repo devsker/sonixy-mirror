@@ -88,19 +88,38 @@
 				<stop offset="50%" stop-color={color} stop-opacity="1" />
 				<stop offset="100%" stop-color={color} stop-opacity="0.8" />
 			</linearGradient>
+            <clipPath id="progressClip-{id}">
+                <rect x="0" y="0" width="{audioPlayer.currentFileId === id ? audioPlayer.progress * barsCount * 4 : 0}" height="100" />
+            </clipPath>
 		</defs>
-		{#each data as barHeight, i (i)}
-			{@const isPlayed = audioPlayer.currentFileId === id && i / barsCount <= audioPlayer.progress}
-			<rect
-				class="bar"
-				x={i * 4}
-				y={50 - (barHeight * 100) / 2}
-				width="2.5"
-				height={barHeight * 100}
-				fill={isPlayed ? 'url(#waveformPlayedGradient)' : 'url(#waveformGradient)'}
-				rx="1.25"
-			/>
-		{/each}
+        
+        <g class="waveform-base">
+            {#each data as barHeight, i (i)}
+                <rect
+                    class="bar"
+                    x={i * 4}
+                    y={50 - (barHeight * 100) / 2}
+                    width="2.5"
+                    height={barHeight * 100}
+                    fill="url(#waveformGradient)"
+                    rx="1.25"
+                />
+            {/each}
+        </g>
+
+        <g class="waveform-played" clip-path="url(#progressClip-{id})">
+            {#each data as barHeight, i (i)}
+                <rect
+                    class="bar"
+                    x={i * 4}
+                    y={50 - (barHeight * 100) / 2}
+                    width="2.5"
+                    height={barHeight * 100}
+                    fill="url(#waveformPlayedGradient)"
+                    rx="1.25"
+                />
+            {/each}
+        </g>
 	</svg>
 
 	{#if isLoading && !waveformData}

@@ -11,9 +11,7 @@
 	}
 
     let displayId = $derived(
-        selectedIds.length === 1 
-            ? selectedIds[0] 
-            : (selectedIds.length === 0 ? audioPlayer.currentFileId : null)
+        audioPlayer.currentFileId || (selectedIds.length === 1 ? selectedIds[0] : null)
     );
 </script>
 

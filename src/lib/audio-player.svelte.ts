@@ -9,13 +9,20 @@ class AudioPlayer {
 	duration = $state(0);
 	volume = $state(1);
 	progress = $derived(this.duration > 0 ? this.currentTime / this.duration : 0);
+	private animationFrame: number | null = null;
 
 	constructor() {
 		if (typeof window !== 'undefined') {
 			this.audio = new Audio();
 			this.audio.volume = this.volume;
-			this.audio.addEventListener('play', () => (this.isPlaying = true));
-			this.audio.addEventListener('pause', () => (this.isPlaying = false));
+			this.audio.addEventListener('play', () => {
+				this.isPlaying = true;
+				this.startUpdateLoop();
+			});
+			this.audio.addEventListener('pause', () => {
+				this.isPlaying = false;
+				this.stopUpdateLoop();
+			});
 			this.audio.addEventListener('ended', () => {
 				if (this.audio) {
 					this.audio.currentTime = 0;
@@ -23,7 +30,7 @@ class AudioPlayer {
 				}
 			});
 			this.audio.addEventListener('timeupdate', () => {
-				if (this.audio) this.currentTime = this.audio.currentTime;
+				if (this.audio && !this.isPlaying) this.currentTime = this.audio.currentTime;
 			});
 			this.audio.addEventListener('loadedmetadata', () => {
 				if (this.audio) {
@@ -44,6 +51,26 @@ class AudioPlayer {
 			this.audio.addEventListener('stalled', () => {
 				console.warn('AudioPlayer: Playback stalled');
 			});
+		}
+	}
+
+	private startUpdateLoop() {
+		if (this.animationFrame) return;
+		const update = () => {
+			if (this.audio && this.isPlaying) {
+				this.currentTime = this.audio.currentTime;
+				this.animationFrame = requestAnimationFrame(update);
+			} else {
+				this.animationFrame = null;
+			}
+		};
+		this.animationFrame = requestAnimationFrame(update);
+	}
+
+	private stopUpdateLoop() {
+		if (this.animationFrame) {
+			cancelAnimationFrame(this.animationFrame);
+			this.animationFrame = null;
 		}
 	}
 
