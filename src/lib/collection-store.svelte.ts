@@ -64,8 +64,7 @@ class CollectionStore {
                     task.progress = (task.completed / task.total) * 100;
                     task.message = `${task.completed} / ${task.total} waveforms`;
                     if (task.completed >= task.total) {
-                        task.status = 'completed';
-                        setTimeout(() => this.removeTask(task.id), 5000);
+                        this.updateTask(task.id, { status: 'completed' });
                     }
                 }
             });
@@ -82,9 +81,13 @@ class CollectionStore {
     updateTask(id: string, updates: Partial<Task>) {
         const task = this.tasks.find(t => t.id === id);
         if (task) {
+            const statusChanged = updates.status && updates.status !== task.status;
             Object.assign(task, updates);
             if (task.total !== undefined && task.completed !== undefined) {
                 task.progress = (task.completed / task.total) * 100;
+            }
+            if ((statusChanged || updates.status) && (task.status === 'completed' || task.status === 'failed')) {
+                setTimeout(() => this.removeTask(id), 5000);
             }
         }
     }
@@ -169,7 +172,6 @@ class CollectionStore {
             const [files, missingWaveforms] = await invoke<[Omit<FileItem, 'selected'>[], string[]]>('add_files_to_collection', { files: filePaths, action });
             this.files = files.map(f => ({ ...f, selected: false }));
             this.updateTask(taskId, { progress: 100, status: 'completed' });
-            setTimeout(() => this.removeTask(taskId), 2000);
 
             if (missingWaveforms.length > 0) {
                 missingWaveforms.forEach(id => this.processingFiles.add(id));
@@ -232,7 +234,6 @@ class CollectionStore {
                     });
                     this.files = result.map(f => ({ ...f, selected: false }));
                     this.updateTask(taskId, { progress: 100, status: 'completed' });
-                    setTimeout(() => this.removeTask(taskId), 2000);
                 } else {
                     // Outside collection, ask user to copy or move
                     this.pendingRelocate = { id, path: selected };
@@ -262,7 +263,6 @@ class CollectionStore {
             this.files = result.map(f => ({ ...f, selected: false }));
             this.pendingRelocate = null;
             this.updateTask(taskId, { progress: 100, status: 'completed' });
-            setTimeout(() => this.removeTask(taskId), 2000);
         } catch (e) {
             console.error('Failed to complete relocation', e);
             this.updateTask(taskId, { status: 'failed', message: (e as Error).message });
@@ -288,7 +288,6 @@ class CollectionStore {
             const result = await invoke<Omit<FileItem, 'selected'>[]>('remove_file_from_collection', { id });
             this.files = result.map(f => ({ ...f, selected: false }));
             this.updateTask(taskId, { progress: 100, status: 'completed' });
-            setTimeout(() => this.removeTask(taskId), 2000);
         } catch (e) {
             console.error('Failed to remove file', e);
             this.updateTask(taskId, { status: 'failed', message: (e as Error).message });

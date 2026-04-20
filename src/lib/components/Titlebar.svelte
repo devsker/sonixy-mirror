@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { Minus, Square, X, RefreshCw, CheckCircle2, AlertCircle, Loader2 } from 'lucide-svelte';
 	import { collectionStore } from '$lib/collection-store.svelte';
@@ -32,10 +32,17 @@
 		await appWindow.close();
 	}
 
-    function toggleTasks() {
+    function toggleTasks(e: MouseEvent) {
+        e.stopPropagation();
         showTasks = !showTasks;
     }
+
+    function closeTasks() {
+        showTasks = false;
+    }
 </script>
+
+<svelte:window onclick={closeTasks} />
 
 <div data-tauri-drag-region class="titlebar">
 	<div data-tauri-drag-region class="title-section">
@@ -43,7 +50,7 @@
 	</div>
 	<div class="controls">
         {#if collectionPath}
-            <div class="task-container">
+            <div class="task-container" onclick={(e) => e.stopPropagation()}>
                 <button 
                     class="control-btn task-btn" 
                     onclick={toggleTasks} 
@@ -75,7 +82,6 @@
                     <div class="tasks-popover">
                         <div class="popover-header">
                             <span>Background Tasks</span>
-                            <button class="clear-btn" onclick={() => collectionStore.tasks = tasks.filter(t => t.status === 'running')}>Clear Finished</button>
                         </div>
                         <div class="tasks-list">
                             {#if tasks.length === 0}
@@ -217,20 +223,6 @@
         font-weight: 600;
         color: var(--text-muted);
         background: rgba(0, 0, 0, 0.02);
-    }
-
-    .clear-btn {
-        background: none;
-        border: none;
-        color: var(--accent-color, #3b82f6);
-        font-size: 10px;
-        cursor: pointer;
-        padding: 2px 4px;
-        border-radius: 4px;
-    }
-
-    .clear-btn:hover {
-        background: rgba(59, 130, 246, 0.1);
     }
 
     .tasks-list {
