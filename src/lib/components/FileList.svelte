@@ -15,6 +15,8 @@
 		selected: boolean;
 	}
 
+	let { onSelectionChange }: { onSelectionChange?: (ids: string[]) => void } = $props();
+
 	let files = $state<FileItem[]>([
 		{
 			id: '1',
@@ -62,6 +64,12 @@
 			selected: false
 		}
 	]);
+
+	let selectedIds = $derived(files.filter((f) => f.selected).map((f) => f.id));
+
+	$effect(() => {
+		onSelectionChange?.(selectedIds);
+	});
 
 	// Filter & Sort State
 	let sortColumn = $state<string | null>(null);
@@ -344,9 +352,10 @@
 <style>
 	.file-list-container {
 		width: 100%;
-		height: 100%;
+		flex: 1;
 		overflow-y: scroll;
 		scrollbar-gutter: stable;
+		min-height: 0;
 	}
 
 	.file-table {
