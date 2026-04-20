@@ -108,6 +108,18 @@
 
 	let lastSelectedIndex = $state(-1);
 
+	$effect(() => {
+		if (audioPlayer.currentFileId) {
+			const playingFile = files.find(f => f.id === audioPlayer.currentFileId);
+			if (playingFile) {
+				const index = displayedFiles.indexOf(playingFile);
+				if (index !== -1) {
+					lastSelectedIndex = index;
+				}
+			}
+		}
+	});
+
 	function toggleAll() {
 		const newState = !allSelected;
 		displayedFiles.forEach((f) => (f.selected = newState));

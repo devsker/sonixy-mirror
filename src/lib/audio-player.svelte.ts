@@ -154,6 +154,12 @@ class AudioPlayer {
 
 		if (this.currentFileId !== file.id) {
 			this.currentFileId = file.id;
+			
+			// Sync selection in collectionStore
+			collectionStore.files.forEach(f => {
+				f.selected = (f.id === file.id);
+			});
+
 			let fullPath = `${collectionStore.collectionPath}/${file.filepath}`;
 			fullPath = fullPath.replace(/[\\\/]+/g, '/');
 			
