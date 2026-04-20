@@ -98,7 +98,7 @@
         </button>
 
         <div class="volume-control" onwheel={handleVolumeWheel}>
-            <button class="playback-btn volume-btn" onclick={() => audioPlayer.setVolume(volume === 0 ? 1 : 0)}>
+            <button class="playback-btn volume-btn" onclick={() => audioPlayer.toggleMute()}>
                 {#if volume === 0}
                     <VolumeX size={14} />
                 {:else if volume < 0.5}

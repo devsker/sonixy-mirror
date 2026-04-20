@@ -11,6 +11,7 @@ class AudioPlayer {
 	currentTime = $state(0);
 	duration = $state(0);
 	volume = $state(1);
+	private lastVolume = 1;
 	progress = $derived(this.duration > 0 ? this.currentTime / this.duration : 0);
 	private animationFrame: number | null = null;
 	private replayAnimationFrame: number | null = null;
@@ -198,7 +199,19 @@ class AudioPlayer {
 
 	setVolume(v: number) {
 		this.volume = Math.max(0, Math.min(1, v));
+		if (this.volume > 0) {
+			this.lastVolume = this.volume;
+		}
 		this.updateEffectiveGain();
+	}
+
+	toggleMute() {
+		if (this.volume > 0) {
+			this.lastVolume = this.volume;
+			this.setVolume(0);
+		} else {
+			this.setVolume(this.lastVolume);
+		}
 	}
 
 	next() {
