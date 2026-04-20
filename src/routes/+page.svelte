@@ -16,7 +16,7 @@
 			{#if selectedIds.length === 0}
 				<div class="selection-message">No file selected</div>
 			{:else if selectedIds.length === 1}
-				<Waveform seed={selectedIds[0]} />
+				<Waveform id={selectedIds[0]} />
 			{:else}
 				<div class="selection-message">More than one file selected</div>
 			{/if}

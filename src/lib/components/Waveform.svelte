@@ -1,44 +1,71 @@
 <script lang="ts">
+	import { invoke } from '@tauri-apps/api/core';
+	import { listen } from '@tauri-apps/api/event';
+	import { onMount } from 'svelte';
+	import { fade } from 'svelte/transition';
+
 	interface Props {
 		height?: number;
 		color?: string;
-		bars?: number;
-		seed?: string;
+		id?: string;
 	}
 
-	let { height = 60, color = 'var(--icon-active)', bars = 100, seed = '' }: Props = $props();
+	let { height = 60, color = 'var(--icon-active)', id = '' }: Props = $props();
 
-	// Simple deterministic pseudo-random generator based on a string seed
-	function mulberry32(a: number) {
-		return function () {
-			let t = (a += 0x6d2b79f5);
-			t = Math.imul(t ^ (t >>> 15), t | 1);
-			t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-			return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-		};
-	}
+	let waveformData = $state<number[] | null>(null);
+	let isLoading = $state(true);
 
-	function hashString(str: string) {
-		let hash = 0;
-		for (let i = 0; i < str.length; i++) {
-			hash = (hash << 5) - hash + str.charCodeAt(i);
-			hash |= 0;
+	async function fetchWaveform() {
+		if (!id) {
+			waveformData = null;
+			isLoading = false;
+			return;
 		}
-		return hash;
+		try {
+			const result = await invoke<number[] | null>('get_waveform', { id });
+			if (result) {
+				waveformData = result.map((v) => v / 255);
+				isLoading = false;
+			} else {
+				// Waveform missing, background thread prioritized it
+				waveformData = null;
+				isLoading = true;
+			}
+		} catch (e) {
+			console.error('Failed to fetch waveform:', e);
+			waveformData = null;
+			isLoading = false;
+		}
 	}
 
-	const data = $derived.by(() => {
-		const hash = hashString(seed || 'default');
-		const rand = mulberry32(hash);
-		return Array.from({ length: bars }, () => rand() * 0.7 + 0.15);
+	// Refetch when id changes
+	$effect(() => {
+		isLoading = true;
+		fetchWaveform();
 	});
+
+	onMount(() => {
+		const unlisten = listen<string>('waveform-generated', (event) => {
+			if (event.payload === id) {
+				fetchWaveform();
+			}
+		});
+		return () => {
+			unlisten.then((f) => f());
+		};
+	});
+
+	// Use an array of 256 zeros as a fallback to allow smooth transitions from/to "empty"
+	const data = $derived(waveformData || Array(256).fill(0));
+	const barsCount = $derived(data.length);
 </script>
 
 <div class="waveform-container" style="height: {height}px">
 	<svg
-		viewBox="0 0 {bars * 4} 100"
+		viewBox="0 0 {barsCount * 4} 100"
 		preserveAspectRatio="none"
 		class="waveform-svg"
+		class:hidden={!waveformData && !isLoading}
 	>
 		<defs>
 			<linearGradient id="waveformGradient" x1="0" y1="0" x2="0" y2="1">
@@ -49,6 +76,7 @@
 		</defs>
 		{#each data as barHeight, i}
 			<rect
+				class="bar"
 				x={i * 4}
 				y={50 - (barHeight * 100) / 2}
 				width="2.5"
@@ -58,6 +86,14 @@
 			/>
 		{/each}
 	</svg>
+
+	{#if isLoading && !waveformData}
+		<div class="loading-overlay" transition:fade={{ duration: 200 }}>
+			<div class="loading-placeholder">
+				<div class="loading-bar"></div>
+			</div>
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -70,11 +106,60 @@
 		align-items: center;
 		background-color: var(--bg-color);
 		flex-shrink: 0;
+		position: relative;
 	}
 
 	.waveform-svg {
 		width: 100%;
 		height: 100%;
 		opacity: 0.9;
+		transition: opacity 0.3s ease;
+	}
+
+	.waveform-svg.hidden {
+		opacity: 0;
+	}
+
+	.bar {
+		/* Use transition for smooth height and position changes */
+		transition:
+			height 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+			y 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+	}
+
+	.loading-overlay {
+		position: absolute;
+		left: 16px;
+		right: 16px;
+		display: flex;
+		align-items: center;
+		pointer-events: none;
+	}
+
+	.loading-placeholder {
+		width: 100%;
+		height: 2px;
+		background-color: var(--border-color);
+		opacity: 0.3;
+		border-radius: 1px;
+		overflow: hidden;
+		position: relative;
+	}
+
+	.loading-bar {
+		position: absolute;
+		width: 30%;
+		height: 100%;
+		background-color: var(--icon-active);
+		animation: loading 1.5s infinite ease-in-out;
+	}
+
+	@keyframes loading {
+		0% {
+			left: -30%;
+		}
+		100% {
+			left: 100%;
+		}
 	}
 </style>

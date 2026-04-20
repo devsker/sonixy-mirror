@@ -1,12 +1,52 @@
 mod collection;
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, Condvar};
+use std::collections::VecDeque;
 use std::path::PathBuf;
-use tauri::State;
+use tauri::{Emitter, Manager, State};
 use crate::collection::FileItem;
+
+struct WaveformTask {
+    id: String,
+    relative_path: String,
+}
+
+struct WaveformQueue {
+    tasks: Mutex<VecDeque<WaveformTask>>,
+    cvar: Condvar,
+}
 
 struct AppState {
     collection_path: Mutex<Option<PathBuf>>,
+    waveform_queue: Arc<WaveformQueue>,
+}
+
+fn queue_missing_waveforms(folder_path: &PathBuf, queue: &Arc<WaveformQueue>) -> Result<(), String> {
+    let conn = collection::init_db(folder_path).map_err(|e| e.to_string())?;
+    
+    // Find files that don't have a waveform yet
+    let mut stmt = conn.prepare(
+        "SELECT id, filepath FROM files WHERE id NOT IN (SELECT id FROM waveforms)"
+    ).map_err(|e| e.to_string())?;
+    
+    let missing_iter = stmt.query_map([], |row| {
+        Ok(WaveformTask {
+            id: row.get(0)?,
+            relative_path: row.get(1)?,
+        })
+    }).map_err(|e| e.to_string())?;
+
+    let mut tasks = queue.tasks.lock().unwrap();
+    for task in missing_iter {
+        if let Ok(t) = task {
+            // Avoid duplicates in queue
+            if !tasks.iter().any(|existing| existing.id == t.id) {
+                tasks.push_back(t);
+            }
+        }
+    }
+    queue.cvar.notify_all();
+    Ok(())
 }
 
 #[tauri::command]
@@ -20,8 +60,13 @@ fn open_collection(path: String, state: State<'_, AppState>) -> Result<Vec<FileI
     collection::scan_folder(&folder_path, &conn).map_err(|e| e.to_string())?;
     let files = collection::get_all_files(&folder_path, &conn).map_err(|e| e.to_string())?;
 
-    let mut state_path = state.collection_path.lock().unwrap();
-    *state_path = Some(folder_path);
+    {
+        let mut state_path = state.collection_path.lock().unwrap();
+        *state_path = Some(folder_path.clone());
+    }
+
+    // Queue missing waveforms in background
+    let _ = queue_missing_waveforms(&folder_path, &state.waveform_queue);
 
     Ok(files)
 }
@@ -38,6 +83,30 @@ fn get_collection_files(state: State<'_, AppState>) -> Result<Vec<FileItem>, Str
 }
 
 #[tauri::command]
+fn get_waveform(id: String, state: State<'_, AppState>) -> Result<Option<Vec<u8>>, String> {
+    let state_path = state.collection_path.lock().unwrap();
+    let folder_path = state_path.as_ref().ok_or("No collection open")?;
+    
+    let conn = collection::init_db(folder_path).map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT data FROM waveforms WHERE id = ?1").map_err(|e| e.to_string())?;
+    let result: Option<Vec<u8>> = stmt.query_row([&id], |row| row.get(0)).ok();
+
+    if result.is_none() {
+        // Prioritize this waveform if it's missing
+        let mut stmt = conn.prepare("SELECT filepath FROM files WHERE id = ?1").map_err(|e| e.to_string())?;
+        if let Ok(relative_path) = stmt.query_row([&id], |row| row.get::<_, String>(0)) {
+            let mut tasks = state.waveform_queue.tasks.lock().unwrap();
+            // Remove if already in queue, then push to front
+            tasks.retain(|t| t.id != id);
+            tasks.push_front(WaveformTask { id, relative_path });
+            state.waveform_queue.cvar.notify_all();
+        }
+    }
+
+    Ok(result)
+}
+
+#[tauri::command]
 fn relocate_file(id: String, new_path: String, action: String, state: State<'_, AppState>) -> Result<Vec<FileItem>, String> {
     let state_path = state.collection_path.lock().unwrap();
     let folder_path = state_path.as_ref().ok_or("No collection open")?;
@@ -48,13 +117,11 @@ fn relocate_file(id: String, new_path: String, action: String, state: State<'_, 
     if !src_path.exists() { return Err("File does not exist".to_string()); }
 
     let dest_path = if action == "link" {
-        // Verify it's already in the collection folder
         if !src_path.starts_with(folder_path) {
             return Err("Linked file must be inside the collection folder. Please choose Copy or Move instead.".to_string());
         }
         src_path
     } else {
-        // Copy or Move to collection folder
         let filename = src_path.file_name().ok_or("Invalid filename")?;
         let d = folder_path.join(filename);
         if action == "move" {
@@ -108,7 +175,6 @@ fn add_files_to_collection(
             std::fs::copy(&src_path, &dest_path).map_err(|e| e.to_string())?;
         }
         
-        // Use relative path for the database
         let relative_path = dest_path.strip_prefix(folder_path).unwrap_or(&dest_path);
         let filepath_str = relative_path.to_string_lossy().to_string();
 
@@ -129,15 +195,58 @@ fn add_files_to_collection(
         }
     }
     
+    // Queue missing waveforms
+    let _ = queue_missing_waveforms(folder_path, &state.waveform_queue);
+    
     let files = collection::get_all_files(folder_path, &conn).map_err(|e| e.to_string())?;
     Ok(files)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let waveform_queue = Arc::new(WaveformQueue {
+        tasks: Mutex::new(VecDeque::new()),
+        cvar: Condvar::new(),
+    });
+
     tauri::Builder::default()
         .manage(AppState {
             collection_path: Mutex::new(None),
+            waveform_queue: Arc::clone(&waveform_queue),
+        })
+        .setup(move |app| {
+            let handle = app.handle().clone();
+            let queue = Arc::clone(&handle.state::<AppState>().waveform_queue);
+            
+            std::thread::spawn(move || {
+                loop {
+                    let task = {
+                        let mut tasks = queue.tasks.lock().unwrap();
+                        while tasks.is_empty() {
+                            tasks = queue.cvar.wait(tasks).unwrap();
+                        }
+                        tasks.pop_front().unwrap()
+                    };
+
+                    // Get collection path
+                    let folder_path = handle.state::<AppState>().collection_path.lock().unwrap().clone();
+
+                    if let Some(folder_path) = folder_path {
+                        let full_path = folder_path.join(&task.relative_path);
+                        if let Some(waveform) = collection::generate_waveform(&full_path) {
+                            if let Ok(conn) = collection::init_db(&folder_path) {
+                                let _ = conn.execute(
+                                    "INSERT OR REPLACE INTO waveforms (id, data) VALUES (?1, ?2)",
+                                    rusqlite::params![task.id, waveform],
+                                );
+                                // Emit event
+                                let _ = handle.emit("waveform-generated", task.id);
+                            }
+                        }
+                    }
+                }
+            });
+            Ok(())
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -145,6 +254,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_collection, 
             get_collection_files,
+            get_waveform,
             add_files_to_collection,
             relocate_file,
             remove_file_from_collection
