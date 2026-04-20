@@ -30,6 +30,12 @@ pub fn init_db(folder_path: &Path) -> rusqlite::Result<Connection> {
     let db_path = folder_path.join(".sonixy.db");
     let conn = Connection::open(db_path)?;
     
+    // Set busy timeout to handle concurrent writes
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    
+    // Enable WAL mode for better performance with multiple readers/writers
+    let _ = conn.execute("PRAGMA journal_mode=WAL", []);
+    
     conn.execute(
         "CREATE TABLE IF NOT EXISTS files (
             id TEXT PRIMARY KEY,

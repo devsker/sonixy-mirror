@@ -18,7 +18,7 @@
 	let loading = $derived(collectionStore.loading);
 	let collectionPath = $derived(collectionStore.collectionPath);
 	let processingFiles = $derived(collectionStore.processingFiles);
-	let currentlyProcessingId = $derived(collectionStore.currentlyProcessingId);
+	let currentlyProcessingIds = $derived(collectionStore.currentlyProcessingIds);
 
 	let selectedIds = $derived(files.filter((f) => f.selected).map((f) => f.id));
 
@@ -368,8 +368,8 @@
 							<td class="filename-col" title={file.filename}>
 								<div class="name-wrapper">
 									{#if processingFiles.has(file.id)}
-										<span class="processing-icon" class:queued={currentlyProcessingId !== file.id} title={currentlyProcessingId === file.id ? "Processing..." : "Queued"}>
-											{#if currentlyProcessingId === file.id}
+										<span class="processing-icon" class:queued={!currentlyProcessingIds.has(file.id)} title={currentlyProcessingIds.has(file.id) ? "Processing..." : "Queued"}>
+											{#if currentlyProcessingIds.has(file.id)}
 												<Loader2 size={14} class="animate-spin" />
 											{:else}
 												<Circle size={10} strokeWidth={3} />

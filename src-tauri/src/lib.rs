@@ -236,40 +236,44 @@ pub fn run() {
         })
         .setup(move |app| {
             let handle = app.handle().clone();
-            let queue = Arc::clone(&handle.state::<AppState>().waveform_queue);
             
-            std::thread::spawn(move || {
-                loop {
-                    let task = {
-                        let mut tasks = queue.tasks.lock().unwrap();
-                        while tasks.is_empty() {
-                            tasks = queue.cvar.wait(tasks).unwrap();
-                        }
-                        tasks.pop_front().unwrap()
-                    };
+            for _ in 0..4 {
+                let handle = handle.clone();
+                let queue = Arc::clone(&handle.state::<AppState>().waveform_queue);
+                
+                std::thread::spawn(move || {
+                    loop {
+                        let task = {
+                            let mut tasks = queue.tasks.lock().unwrap();
+                            while tasks.is_empty() {
+                                tasks = queue.cvar.wait(tasks).unwrap();
+                            }
+                            tasks.pop_front().unwrap()
+                        };
 
-                    // Get collection path
-                    let folder_path = handle.state::<AppState>().collection_path.lock().unwrap().clone();
+                        // Get collection path
+                        let folder_path = handle.state::<AppState>().collection_path.lock().unwrap().clone();
 
-                    if let Some(folder_path) = folder_path {
-                        let full_path = folder_path.join(&task.relative_path);
-                        
-                        // Emit started event
-                        let _ = handle.emit("waveform-started", task.id.clone());
+                        if let Some(folder_path) = folder_path {
+                            let full_path = folder_path.join(&task.relative_path);
+                            
+                            // Emit started event
+                            let _ = handle.emit("waveform-started", task.id.clone());
 
-                        if let Some(waveform) = collection::generate_waveform(&full_path) {
-                            if let Ok(conn) = collection::init_db(&folder_path) {
-                                let _ = conn.execute(
-                                    "INSERT OR REPLACE INTO waveforms (id, data) VALUES (?1, ?2)",
-                                    rusqlite::params![task.id, waveform],
-                                );
-                                // Emit event
-                                let _ = handle.emit("waveform-generated", task.id);
+                            if let Some(waveform) = collection::generate_waveform(&full_path) {
+                                if let Ok(conn) = collection::init_db(&folder_path) {
+                                    let _ = conn.execute(
+                                        "INSERT OR REPLACE INTO waveforms (id, data) VALUES (?1, ?2)",
+                                        rusqlite::params![task.id, waveform],
+                                    );
+                                    // Emit event
+                                    let _ = handle.emit("waveform-generated", task.id);
+                                }
                             }
                         }
                     }
-                }
-            });
+                });
+            }
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())

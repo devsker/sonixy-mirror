@@ -31,7 +31,7 @@ class CollectionStore {
     pendingRelocate = $state<{id: string, path: string} | null>(null);
     tasks = $state<Task[]>([]);
     processingFiles = $state<Set<string>>(new Set());
-    currentlyProcessingId = $state<string | null>(null);
+    currentlyProcessingIds = $state<Set<string>>(new Set());
 
     constructor() {
         // Automatically open last collection if it exists
@@ -43,7 +43,9 @@ class CollectionStore {
 
             // Listen for waveform started
             listen('waveform-started', (event) => {
-                this.currentlyProcessingId = event.payload as string;
+                const id = event.payload as string;
+                this.currentlyProcessingIds.add(id);
+                this.currentlyProcessingIds = new Set(this.currentlyProcessingIds);
             });
 
             // Listen for waveform generation
@@ -53,9 +55,8 @@ class CollectionStore {
                 this.processingFiles.delete(id);
                 this.processingFiles = new Set(this.processingFiles); // Trigger reactivity
 
-                if (this.currentlyProcessingId === id) {
-                    this.currentlyProcessingId = null;
-                }
+                this.currentlyProcessingIds.delete(id);
+                this.currentlyProcessingIds = new Set(this.currentlyProcessingIds);
 
                 const task = this.tasks.find(t => t.id === 'waveforms');
                 if (task && task.total !== undefined && task.completed !== undefined) {
