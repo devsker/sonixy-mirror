@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
 	import { ChevronUp, ChevronDown, Filter, FolderOpen, Loader2, AlertTriangle, Trash2, Search, Circle } from 'lucide-svelte';
+	import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu';
+	import { revealItemInDir } from '@tauri-apps/plugin-opener';
+	import { ask, message } from '@tauri-apps/plugin-dialog';
 	import { collectionStore, type FileItem } from '$lib/collection-store.svelte';
 	import { audioPlayer } from '$lib/audio-player.svelte';
 
@@ -152,6 +155,58 @@
 		}
 	}
 
+	async function handleContextMenu(event: MouseEvent, file: FileItem) {
+		event.preventDefault();
+
+		if (!file.selected) {
+			files.forEach((f) => (f.selected = false));
+			file.selected = true;
+		}
+
+		const menu = await Menu.new({
+			items: [
+				await MenuItem.new({
+					text: audioPlayer.currentFileId === file.id && audioPlayer.isPlaying ? 'Pause' : 'Play',
+					enabled: !file.missing,
+					action: () => audioPlayer.toggle(file)
+				}),
+				await PredefinedMenuItem.new({ item: 'Separator' }),
+				await MenuItem.new({
+					text: 'Show in Folder',
+					enabled: !file.missing,
+					action: async () => {
+						const fullPath = `${collectionPath}/${file.filepath}`.replace(/[\\\/]+/g, '/');
+						await revealItemInDir(fullPath);
+					}
+				}),
+				await MenuItem.new({
+					text: 'Copy Path',
+					action: async () => {
+						const fullPath = `${collectionPath}/${file.filepath}`.replace(/[\\\/]+/g, '/');
+						await navigator.clipboard.writeText(fullPath);
+					}
+				}),
+				await PredefinedMenuItem.new({ item: 'Separator' }),
+				...(file.missing
+					? [
+							await MenuItem.new({
+								text: 'Locate File...',
+								action: () => collectionStore.relocateFile(file.id)
+							})
+						]
+					: []),
+				await MenuItem.new({
+					text: 'Remove',
+					action: () => {
+						fileToRemove = file;
+					}
+				})
+			]
+		});
+
+		await menu.popup();
+	}
+
 	// Column definitions
 	const columnConfigs: Record<string, { label: string; sortable?: boolean; filterable?: 'format' | 'tags' }> = {
 		filename: { label: 'Filename', sortable: true },
@@ -232,9 +287,58 @@
 	function closePopovers() {
 		activePopover = null;
 	}
+
+	// Remove Dialog State
+	let fileToRemove = $state<FileItem | null>(null);
+
+	function closeRemoveDialog() {
+		fileToRemove = null;
+	}
+
+	async function confirmRemoveFromCollection() {
+		if (fileToRemove) {
+			audioPlayer.stopIfPlaying(fileToRemove.id);
+			await collectionStore.removeFromCollectionOnly(fileToRemove.id);
+			closeRemoveDialog();
+		}
+	}
+
+	async function confirmRemoveFromDisk() {
+		if (fileToRemove) {
+			audioPlayer.stopIfPlaying(fileToRemove.id);
+			await collectionStore.removeFileFromDisk(fileToRemove.id);
+			closeRemoveDialog();
+		}
+	}
 </script>
 
-<svelte:window onclick={closePopovers} />
+<svelte:window onclick={closePopovers} onkeydown={(e) => e.key === 'Escape' && closeRemoveDialog()} />
+
+{#if fileToRemove}
+	<div class="modal-backdrop" onclick={closeRemoveDialog} role="presentation">
+		<div class="modal-content" onclick={(e) => e.stopPropagation()} role="presentation">
+			<div class="modal-header">
+				<AlertTriangle size={24} class="warning-icon-large" />
+				<h3>Remove File</h3>
+			</div>
+			<div class="modal-body">
+				<p>How would you like to remove <strong>{fileToRemove.filename}</strong>?</p>
+				<p class="warning-text">"Remove from Disk" will permanently delete the file.</p>
+			</div>
+			<div class="modal-footer">
+				<button class="modal-btn secondary" onclick={closeRemoveDialog}>Cancel</button>
+				<div class="danger-group">
+					<button class="modal-btn danger-outline" onclick={confirmRemoveFromCollection}>
+						Remove from Collection
+					</button>
+					<button class="modal-btn danger" onclick={confirmRemoveFromDisk}>
+						Remove from Disk
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+{/if}
 
 <div class="file-list-container">
 	{#if !collectionPath}
@@ -373,6 +477,7 @@
 					class:missing={file.missing}
 					onclick={(e) => handleSelection(e, i)}
 					onkeydown={(e) => e.key === 'Enter' && handleSelection(e as unknown as MouseEvent, i)}
+					oncontextmenu={(e) => handleContextMenu(e, file)}
 					tabindex="0"
 				>
 					{#if showCheckboxes}
@@ -886,5 +991,125 @@
 	@keyframes spin {
 		from { transform: rotate(0deg); }
 		to { transform: rotate(360deg); }
+	}
+
+	/* Modal Styles */
+	.modal-backdrop {
+		position: fixed;
+		top: 0;
+		left: 0;
+		width: 100vw;
+		height: 100vh;
+		background-color: rgba(0, 0, 0, 0.5);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 2000;
+		backdrop-filter: blur(2px);
+	}
+
+	.modal-content {
+		background-color: var(--bg-color);
+		border: 1px solid var(--border-color);
+		border-radius: 12px;
+		width: 450px;
+		max-width: 90vw;
+		box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+		padding: 24px;
+		display: flex;
+		flex-direction: column;
+		gap: 20px;
+	}
+
+	.modal-header {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
+
+	.modal-header h3 {
+		margin: 0;
+		font-size: 18px;
+		color: var(--text-color);
+	}
+
+	.warning-icon-large {
+		color: #ffa600;
+	}
+
+	.modal-body {
+		font-size: 14px;
+		color: var(--text-color);
+		line-height: 1.5;
+	}
+
+	.modal-body p {
+		margin: 0 0 12px;
+	}
+
+	.warning-text {
+		color: #e81123;
+		font-weight: 500;
+	}
+
+	.modal-footer {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-top: 8px;
+	}
+
+	.danger-group {
+		display: flex;
+		gap: 8px;
+	}
+
+	.modal-btn {
+		padding: 8px 16px;
+		border-radius: 6px;
+		font-size: 13px;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.1s;
+		border: 1px solid transparent;
+	}
+
+	.modal-btn.secondary {
+		background-color: transparent;
+		color: var(--text-muted);
+		border-color: var(--border-color);
+	}
+
+	.modal-btn.secondary:hover {
+		background-color: rgba(0, 0, 0, 0.05);
+		color: var(--text-color);
+	}
+
+	:global(html.dark) .modal-btn.secondary:hover {
+		background-color: rgba(255, 255, 255, 0.05);
+	}
+
+	.modal-btn.danger-outline {
+		background-color: transparent;
+		color: #e81123;
+		border-color: #e81123;
+	}
+
+	.modal-btn.danger-outline:hover {
+		background-color: rgba(232, 17, 35, 0.05);
+	}
+
+	.modal-btn.danger {
+		background-color: #e81123;
+		color: white;
+	}
+
+	.modal-btn.danger:hover {
+		background-color: #d10f1f;
+	}
+
+	.modal-btn.danger:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 </style>

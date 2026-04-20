@@ -250,6 +250,21 @@ class AudioPlayer {
 		}
 	}
 
+	stop() {
+		if (this.audio) {
+			this.audio.pause();
+			this.audio.currentTime = 0;
+			this.isPlaying = false;
+			this.currentFileId = null;
+		}
+	}
+
+	stopIfPlaying(fileId: string) {
+		if (this.currentFileId === fileId) {
+			this.stop();
+		}
+	}
+
 	seek(progressPercent: number) {
 		if (this.audio && this.audio.readyState > 0) {
 			const newTime = progressPercent * this.duration;

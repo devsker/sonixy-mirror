@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
+import { remove } from '@tauri-apps/plugin-fs';
 
 export interface FileItem {
     id: string;
@@ -284,14 +285,12 @@ class CollectionStore {
         }
     }
 
-    async removeFile(id: string) {
+    async removeFromCollectionOnly(id: string) {
         const file = this.files.find(f => f.id === id);
-        if (!confirm(`Are you sure you want to remove "${file?.filename}" from the collection?`)) return;
-        
         const taskId = Math.random().toString(36).substring(7);
         this.addTask({
             id: taskId,
-            name: `Removing ${file?.filename}`,
+            name: `Removing ${file?.filename} from collection`,
             progress: 0,
             status: 'running'
         });
@@ -302,11 +301,57 @@ class CollectionStore {
             this.files = result.map(f => ({ ...f, selected: false }));
             this.updateTask(taskId, { progress: 100, status: 'completed' });
         } catch (e) {
-            console.error('Failed to remove file', e);
+            console.error('Failed to remove file from collection', e);
             this.updateTask(taskId, { status: 'failed', message: (e as Error).message });
         } finally {
             this.loading = false;
         }
+    }
+
+    async removeFileFromDisk(id: string) {
+        const file = this.files.find(f => f.id === id);
+        if (!file || !this.collectionPath) {
+            console.error('removeFileFromDisk: File or collectionPath missing', { file, path: this.collectionPath });
+            return;
+        }
+
+        const taskId = Math.random().toString(36).substring(7);
+        this.addTask({
+            id: taskId,
+            name: `Deleting ${file.filename} from disk`,
+            progress: 0,
+            status: 'running'
+        });
+
+        try {
+            this.loading = true;
+            // 1. Delete from disk
+            const fullPath = `${this.collectionPath}/${file.filepath}`.replace(/[\\\/]+/g, '/');
+            console.log('Attempting to delete file:', fullPath);
+            
+            try {
+                await remove(fullPath);
+            } catch (fsErr) {
+                console.warn('File system removal failed, but proceeding to remove from collection:', fsErr);
+            }
+
+            // 2. Remove from collection (database/UI state)
+            const result = await invoke<Omit<FileItem, 'selected'>[]>('remove_file_from_collection', { id });
+            this.files = result.map(f => ({ ...f, selected: false }));
+            this.updateTask(taskId, { progress: 100, status: 'completed' });
+        } catch (e) {
+            console.error('Failed to delete file from disk', e);
+            this.updateTask(taskId, { status: 'failed', message: (e as Error).message });
+        } finally {
+            this.loading = false;
+        }
+    }
+
+    async removeFile(id: string) {
+        const file = this.files.find(f => f.id === id);
+        if (!confirm(`Are you sure you want to remove "${file?.filename}" from the collection?`)) return;
+        
+        await this.removeFromCollectionOnly(id);
     }
 
     async regenerateWaveforms() {
