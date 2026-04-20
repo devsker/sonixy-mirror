@@ -30,6 +30,8 @@ class CollectionStore {
     loading = $state(false);
     pendingRelocate = $state<{id: string, path: string} | null>(null);
     tasks = $state<Task[]>([]);
+    processingFiles = $state<Set<string>>(new Set());
+    currentlyProcessingId = $state<string | null>(null);
 
     constructor() {
         // Automatically open last collection if it exists
@@ -39,9 +41,22 @@ class CollectionStore {
                 this.openCollectionByPath(lastPath);
             }
 
+            // Listen for waveform started
+            listen('waveform-started', (event) => {
+                this.currentlyProcessingId = event.payload as string;
+            });
+
             // Listen for waveform generation
             listen('waveform-generated', (event) => {
                 const id = event.payload as string;
+                
+                this.processingFiles.delete(id);
+                this.processingFiles = new Set(this.processingFiles); // Trigger reactivity
+
+                if (this.currentlyProcessingId === id) {
+                    this.currentlyProcessingId = null;
+                }
+
                 const task = this.tasks.find(t => t.id === 'waveforms');
                 if (task && task.total !== undefined && task.completed !== undefined) {
                     task.completed++;
@@ -81,19 +96,23 @@ class CollectionStore {
         try {
             this.loading = true;
             this.collectionPath = path;
-            const [files, missingWaveforms] = await invoke<[Omit<FileItem, 'selected'>[], number]>('open_collection', { path });
+            this.processingFiles = new Set();
+            const [files, missingWaveforms] = await invoke<[Omit<FileItem, 'selected'>[], string[]]>('open_collection', { path });
             this.files = files.map(f => ({ ...f, selected: false }));
             localStorage.setItem('lastCollectionPath', path);
             
-            if (missingWaveforms > 0) {
+            if (missingWaveforms.length > 0) {
+                missingWaveforms.forEach(id => this.processingFiles.add(id));
+                this.processingFiles = new Set(this.processingFiles);
+
                 this.addTask({
                     id: 'waveforms',
                     name: 'Generating Waveforms',
                     progress: 0,
                     status: 'running',
-                    total: missingWaveforms,
+                    total: missingWaveforms.length,
                     completed: 0,
-                    message: `0 / ${missingWaveforms} waveforms`
+                    message: `0 / ${missingWaveforms.length} waveforms`
                 });
             }
         } catch (e) {
@@ -146,15 +165,18 @@ class CollectionStore {
 
         try {
             this.loading = true;
-            const [files, missingWaveforms] = await invoke<[Omit<FileItem, 'selected'>[], number]>('add_files_to_collection', { files: filePaths, action });
+            const [files, missingWaveforms] = await invoke<[Omit<FileItem, 'selected'>[], string[]]>('add_files_to_collection', { files: filePaths, action });
             this.files = files.map(f => ({ ...f, selected: false }));
             this.updateTask(taskId, { progress: 100, status: 'completed' });
             setTimeout(() => this.removeTask(taskId), 2000);
 
-            if (missingWaveforms > 0) {
+            if (missingWaveforms.length > 0) {
+                missingWaveforms.forEach(id => this.processingFiles.add(id));
+                this.processingFiles = new Set(this.processingFiles);
+
                 let task = this.tasks.find(t => t.id === 'waveforms');
                 if (task) {
-                    task.total = (task.total || 0) + missingWaveforms;
+                    task.total = (task.total || 0) + missingWaveforms.length;
                     task.completed = (task.completed || 0);
                     task.status = 'running';
                     task.message = `${task.completed} / ${task.total} waveforms`;
@@ -165,9 +187,9 @@ class CollectionStore {
                         name: 'Generating Waveforms',
                         progress: 0,
                         status: 'running',
-                        total: missingWaveforms,
+                        total: missingWaveforms.length,
                         completed: 0,
-                        message: `0 / ${missingWaveforms} waveforms`
+                        message: `0 / ${missingWaveforms.length} waveforms`
                     });
                 }
             }
@@ -271,6 +293,32 @@ class CollectionStore {
             this.updateTask(taskId, { status: 'failed', message: (e as Error).message });
         } finally {
             this.loading = false;
+        }
+    }
+
+    async regenerateWaveforms() {
+        if (!this.collectionPath) return;
+        try {
+            // Remove existing task if any
+            this.removeTask('waveforms');
+            
+            const missingWaveforms = await invoke<string[]>('regenerate_waveforms');
+            
+            if (missingWaveforms.length > 0) {
+                this.processingFiles = new Set(missingWaveforms);
+                
+                this.addTask({
+                    id: 'waveforms',
+                    name: 'Generating Waveforms',
+                    progress: 0,
+                    status: 'running',
+                    total: missingWaveforms.length,
+                    completed: 0,
+                    message: `0 / ${missingWaveforms.length} waveforms`
+                });
+            }
+        } catch (e) {
+            console.error('Failed to regenerate waveforms', e);
         }
     }
 }

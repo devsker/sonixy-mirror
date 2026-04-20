@@ -69,9 +69,6 @@
                             transform="rotate(-90 9) "
                         />
                     </svg>
-                    {#if activeTasksCount > 0}
-                        <span class="task-badge">{activeTasksCount}</span>
-                    {/if}
                 </button>
 
                 {#if showTasks}
@@ -148,7 +145,6 @@
 		align-items: center;
 		border-bottom: 1px solid var(--border-color);
 		z-index: 1000;
-		overflow: hidden;
 		box-sizing: border-box;
 	}
 
@@ -194,21 +190,6 @@
 
     .task-btn.active {
         color: var(--accent-color, #3b82f6);
-    }
-
-    .task-badge {
-        position: absolute;
-        top: 4px;
-        right: 4px;
-        background: var(--accent-color, #3b82f6);
-        color: white;
-        font-size: 8px;
-        font-weight: bold;
-        padding: 1px 3px;
-        border-radius: 6px;
-        min-width: 8px;
-        text-align: center;
-        line-height: 1;
     }
 
     .tasks-popover {

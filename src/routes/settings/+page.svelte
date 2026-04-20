@@ -1,5 +1,6 @@
 <script>
 	import { getContext } from 'svelte';
+	import { collectionStore } from '$lib/collection-store.svelte';
 
 	const settings = getContext('settings-context');
 
@@ -56,6 +57,18 @@
 					Reset Column Order
 				</button>
 				<p class="description">Reset the file list columns to their default order.</p>
+			</div>
+		</section>
+
+		<section class="settings-section">
+			<h2>Collection</h2>
+			
+			<div class="setting-item">
+				<label>Waveforms</label>
+				<button class="reset-btn" onclick={() => collectionStore.regenerateWaveforms()}>
+					Re-generate All Waveforms
+				</button>
+				<p class="description">Clears and re-processes all waveforms in the current collection. Useful if waveforms appear corrupted or missing.</p>
 			</div>
 		</section>
 

@@ -21,7 +21,7 @@ struct AppState {
     waveform_queue: Arc<WaveformQueue>,
 }
 
-fn queue_missing_waveforms(folder_path: &PathBuf, queue: &Arc<WaveformQueue>) -> Result<usize, String> {
+fn queue_missing_waveforms(folder_path: &PathBuf, queue: &Arc<WaveformQueue>) -> Result<Vec<String>, String> {
     let conn = collection::init_db(folder_path).map_err(|e| e.to_string())?;
     
     // Find files that don't have a waveform yet
@@ -36,23 +36,23 @@ fn queue_missing_waveforms(folder_path: &PathBuf, queue: &Arc<WaveformQueue>) ->
         })
     }).map_err(|e| e.to_string())?;
 
-    let mut added_count = 0;
+    let mut added_ids = Vec::new();
     let mut tasks = queue.tasks.lock().unwrap();
     for task in missing_iter {
         if let Ok(t) = task {
             // Avoid duplicates in queue
             if !tasks.iter().any(|existing| existing.id == t.id) {
+                added_ids.push(t.id.clone());
                 tasks.push_back(t);
-                added_count += 1;
             }
         }
     }
     queue.cvar.notify_all();
-    Ok(added_count)
+    Ok(added_ids)
 }
 
 #[tauri::command]
-fn open_collection(path: String, state: State<'_, AppState>) -> Result<(Vec<FileItem>, usize), String> {
+fn open_collection(path: String, state: State<'_, AppState>) -> Result<(Vec<FileItem>, Vec<String>), String> {
     let folder_path = PathBuf::from(&path);
     if !folder_path.exists() || !folder_path.is_dir() {
         return Err("Invalid folder path".to_string());
@@ -68,9 +68,9 @@ fn open_collection(path: String, state: State<'_, AppState>) -> Result<(Vec<File
     }
 
     // Queue missing waveforms in background
-    let missing_count = queue_missing_waveforms(&folder_path, &state.waveform_queue).unwrap_or(0);
+    let missing_ids = queue_missing_waveforms(&folder_path, &state.waveform_queue).unwrap_or_default();
 
-    Ok((files, missing_count))
+    Ok((files, missing_ids))
 }
 
 #[tauri::command]
@@ -158,7 +158,7 @@ fn add_files_to_collection(
     files: Vec<String>, 
     action: String, 
     state: State<'_, AppState>
-) -> Result<(Vec<FileItem>, usize), String> {
+) -> Result<(Vec<FileItem>, Vec<String>), String> {
     let state_path = state.collection_path.lock().unwrap();
     let folder_path = state_path.as_ref().ok_or("No collection open")?;
     
@@ -198,10 +198,28 @@ fn add_files_to_collection(
     }
     
     // Queue missing waveforms
-    let missing_count = queue_missing_waveforms(folder_path, &state.waveform_queue).unwrap_or(0);
+    let missing_ids = queue_missing_waveforms(folder_path, &state.waveform_queue).unwrap_or_default();
     
     let files = collection::get_all_files(folder_path, &conn).map_err(|e| e.to_string())?;
-    Ok((files, missing_count))
+    Ok((files, missing_ids))
+}
+
+#[tauri::command]
+fn regenerate_waveforms(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let state_path = state.collection_path.lock().unwrap();
+    let folder_path = state_path.as_ref().ok_or("No collection open")?;
+    
+    let conn = collection::init_db(folder_path).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM waveforms", []).map_err(|e| e.to_string())?;
+    
+    // Clear the current queue
+    {
+        let mut tasks = state.waveform_queue.tasks.lock().unwrap();
+        tasks.clear();
+    }
+
+    let missing_ids = queue_missing_waveforms(folder_path, &state.waveform_queue).unwrap_or_default();
+    Ok(missing_ids)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -235,6 +253,10 @@ pub fn run() {
 
                     if let Some(folder_path) = folder_path {
                         let full_path = folder_path.join(&task.relative_path);
+                        
+                        // Emit started event
+                        let _ = handle.emit("waveform-started", task.id.clone());
+
                         if let Some(waveform) = collection::generate_waveform(&full_path) {
                             if let Ok(conn) = collection::init_db(&folder_path) {
                                 let _ = conn.execute(
@@ -259,7 +281,8 @@ pub fn run() {
             get_waveform,
             add_files_to_collection,
             relocate_file,
-            remove_file_from_collection
+            remove_file_from_collection,
+            regenerate_waveforms
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

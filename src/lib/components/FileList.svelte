@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
-	import { ChevronUp, ChevronDown, Filter, FolderOpen, Loader2, AlertTriangle, Trash2, Search } from 'lucide-svelte';
+	import { ChevronUp, ChevronDown, Filter, FolderOpen, Loader2, AlertTriangle, Trash2, Search, Circle } from 'lucide-svelte';
 	import { collectionStore, type FileItem } from '$lib/collection-store.svelte';
 
 	interface SettingsState {
@@ -17,6 +17,8 @@
 	let files = $derived(collectionStore.files);
 	let loading = $derived(collectionStore.loading);
 	let collectionPath = $derived(collectionStore.collectionPath);
+	let processingFiles = $derived(collectionStore.processingFiles);
+	let currentlyProcessingId = $derived(collectionStore.currentlyProcessingId);
 
 	let selectedIds = $derived(files.filter((f) => f.selected).map((f) => f.id));
 
@@ -365,6 +367,15 @@
 						{#if columnId === 'filename'}
 							<td class="filename-col" title={file.filename}>
 								<div class="name-wrapper">
+									{#if processingFiles.has(file.id)}
+										<span class="processing-icon" class:queued={currentlyProcessingId !== file.id} title={currentlyProcessingId === file.id ? "Processing..." : "Queued"}>
+											{#if currentlyProcessingId === file.id}
+												<Loader2 size={14} class="animate-spin" />
+											{:else}
+												<Circle size={10} strokeWidth={3} />
+											{/if}
+										</span>
+									{/if}
 									{#if file.missing}
 										<span class="warning-icon" title="File not found">
 											<AlertTriangle size={14} />
@@ -570,6 +581,19 @@
 		color: #ffa600;
 		display: flex;
 		align-items: center;
+	}
+
+	.processing-icon {
+		color: var(--accent-color, #3b82f6);
+		display: flex;
+		align-items: center;
+		min-width: 14px;
+		justify-content: center;
+	}
+
+	.processing-icon.queued {
+		color: var(--text-muted);
+		opacity: 0.5;
 	}
 
 	.missing-actions {
