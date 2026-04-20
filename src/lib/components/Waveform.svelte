@@ -46,8 +46,10 @@
 	});
 
 	onMount(() => {
-		const unlisten = listen<string>('waveform-generated', (event) => {
-			if (event.payload === id) {
+		const unlisten = listen<any>('waveform-generated', (event) => {
+			// Payload is now { id, gain }
+			const payloadId = typeof event.payload === 'string' ? event.payload : event.payload?.id;
+			if (payloadId === id) {
 				fetchWaveform();
 			}
 		});
@@ -65,6 +67,13 @@
 		const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
 		const percent = (e.clientX - rect.left) / rect.width;
 		audioPlayer.seek(percent);
+	}
+
+	// Calculate bar height with a minimum line for silent parts
+	function getBarHeight(val: number) {
+		const minHeight = 2; // px
+		const scaledHeight = val * 100;
+		return Math.max(minHeight, scaledHeight);
 	}
 </script>
 
@@ -94,13 +103,14 @@
 		</defs>
         
         <g class="waveform-base">
-            {#each data as barHeight, i (i)}
+            {#each data as val, i (i)}
+                {@const h = getBarHeight(val)}
                 <rect
                     class="bar"
                     x={i * 4}
-                    y={50 - (barHeight * 100) / 2}
+                    y={50 - h / 2}
                     width="2.5"
-                    height={barHeight * 100}
+                    height={h}
                     fill="url(#waveformGradient)"
                     rx="1.25"
                 />
@@ -108,13 +118,14 @@
         </g>
 
         <g class="waveform-played" clip-path="url(#progressClip-{id})">
-            {#each data as barHeight, i (i)}
+            {#each data as val, i (i)}
+                {@const h = getBarHeight(val)}
                 <rect
                     class="bar"
                     x={i * 4}
-                    y={50 - (barHeight * 100) / 2}
+                    y={50 - h / 2}
                     width="2.5"
-                    height={barHeight * 100}
+                    height={h}
                     fill="url(#waveformPlayedGradient)"
                     rx="1.25"
                 />
