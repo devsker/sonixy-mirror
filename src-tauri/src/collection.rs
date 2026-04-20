@@ -22,6 +22,7 @@ pub struct FileItem {
     pub length: String,
     pub size: String,
     pub tags: Vec<String>,
+    pub gain: f32,
     #[serde(default)]
     pub missing: bool,
 }
@@ -44,10 +45,28 @@ pub fn init_db(folder_path: &Path) -> rusqlite::Result<Connection> {
             format TEXT NOT NULL,
             length TEXT NOT NULL,
             size TEXT NOT NULL,
-            tags TEXT NOT NULL
+            tags TEXT NOT NULL,
+            gain REAL DEFAULT 1.0
         )",
         [],
     )?;
+
+    // Check if gain column exists (simple migration)
+    {
+        let mut stmt = conn.prepare("PRAGMA table_info(files)")?;
+        let mut has_gain = false;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let name: String = row.get(1)?;
+            if name == "gain" {
+                has_gain = true;
+                break;
+            }
+        }
+        if !has_gain {
+            let _ = conn.execute("ALTER TABLE files ADD COLUMN gain REAL DEFAULT 1.0", []);
+        }
+    }
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS waveforms (
@@ -94,6 +113,7 @@ pub fn extract_metadata(path: &Path) -> Option<FileItem> {
         length,
         size,
         tags,
+        gain: 1.0,
         missing: false,
     })
 }
@@ -125,7 +145,7 @@ pub fn scan_folder(folder_path: &Path, conn: &Connection) -> rusqlite::Result<()
             if let Some(mut item) = extract_metadata(path) {
                 item.filepath = filepath_str;
                 conn.execute(
-                    "INSERT INTO files (id, filename, filepath, format, length, size, tags) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    "INSERT INTO files (id, filename, filepath, format, length, size, tags, gain) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![
                         item.id,
                         item.filename,
@@ -133,7 +153,8 @@ pub fn scan_folder(folder_path: &Path, conn: &Connection) -> rusqlite::Result<()
                         item.format,
                         item.length,
                         item.size,
-                        serde_json::to_string(&item.tags).unwrap_or_else(|_| "[]".to_string())
+                        serde_json::to_string(&item.tags).unwrap_or_else(|_| "[]".to_string()),
+                        item.gain
                     ],
                 )?;
             }
@@ -144,7 +165,7 @@ pub fn scan_folder(folder_path: &Path, conn: &Connection) -> rusqlite::Result<()
 }
 
 pub fn get_all_files(folder_path: &Path, conn: &Connection) -> rusqlite::Result<Vec<FileItem>> {
-    let mut stmt = conn.prepare("SELECT id, filename, filepath, format, length, size, tags FROM files")?;
+    let mut stmt = conn.prepare("SELECT id, filename, filepath, format, length, size, tags, gain FROM files")?;
     let file_iter = stmt.query_map([], |row| {
         let tags_json: String = row.get(6)?;
         let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
@@ -160,6 +181,7 @@ pub fn get_all_files(folder_path: &Path, conn: &Connection) -> rusqlite::Result<
             length: row.get(4)?,
             size: row.get(5)?,
             tags,
+            gain: row.get(7)?,
             missing,
         })
     })?;
@@ -186,7 +208,7 @@ pub fn update_file_path(id: &str, new_relative_path: &str, conn: &Connection) ->
     Ok(())
 }
 
-pub fn generate_waveform(path: &Path) -> Option<Vec<u8>> {
+pub fn generate_waveform(path: &Path) -> Option<(Vec<u8>, f32)> {
     let file = std::fs::File::open(path).ok()?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();
@@ -213,6 +235,7 @@ pub fn generate_waveform(path: &Path) -> Option<Vec<u8>> {
 
     let track_id = track.id;
     let mut samples = Vec::new();
+    let mut peak = 0.0f32;
 
     while let Ok(packet) = format.next_packet() {
         if packet.track_id() != track_id {
@@ -224,7 +247,9 @@ pub fn generate_waveform(path: &Path) -> Option<Vec<u8>> {
                 for i in 0..buf.frames() {
                     let mut max = 0.0f32;
                     for plane in buf.planes().planes() {
-                        max = max.max(plane[i].abs());
+                        let val = plane[i].abs();
+                        max = max.max(val);
+                        peak = peak.max(val);
                     }
                     samples.push(max);
                 }
@@ -234,7 +259,9 @@ pub fn generate_waveform(path: &Path) -> Option<Vec<u8>> {
                     let mut max = 0.0f32;
                     for plane in buf.planes().planes() {
                         let sample = (plane[i] as f32 - 128.0) / 128.0;
-                        max = max.max(sample.abs());
+                        let val = sample.abs();
+                        max = max.max(val);
+                        peak = peak.max(val);
                     }
                     samples.push(max);
                 }
@@ -244,7 +271,9 @@ pub fn generate_waveform(path: &Path) -> Option<Vec<u8>> {
                     let mut max = 0.0f32;
                     for plane in buf.planes().planes() {
                         let sample = plane[i] as f32 / 32768.0;
-                        max = max.max(sample.abs());
+                        let val = sample.abs();
+                        max = max.max(val);
+                        peak = peak.max(val);
                     }
                     samples.push(max);
                 }
@@ -255,7 +284,9 @@ pub fn generate_waveform(path: &Path) -> Option<Vec<u8>> {
                     for plane in buf.planes().planes() {
                         // symphonia::core::sample::i24 is a tuple struct with .0 as i32
                         let sample = plane[i].0 as f32 / 8388608.0;
-                        max = max.max(sample.abs());
+                        let val = sample.abs();
+                        max = max.max(val);
+                        peak = peak.max(val);
                     }
                     samples.push(max);
                 }
@@ -265,7 +296,9 @@ pub fn generate_waveform(path: &Path) -> Option<Vec<u8>> {
                     let mut max = 0.0f32;
                     for plane in buf.planes().planes() {
                         let sample = plane[i] as f32 / 2147483648.0;
-                        max = max.max(sample.abs());
+                        let val = sample.abs();
+                        max = max.max(val);
+                        peak = peak.max(val);
                     }
                     samples.push(max);
                 }
@@ -300,5 +333,5 @@ pub fn generate_waveform(path: &Path) -> Option<Vec<u8>> {
         result.push((max * 255.0).min(255.0) as u8);
     }
 
-    Some(result)
+    Some((result, peak))
 }

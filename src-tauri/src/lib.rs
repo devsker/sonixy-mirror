@@ -9,6 +9,7 @@ use crate::collection::FileItem;
 struct WaveformTask {
     id: String,
     relative_path: String,
+    normalize: bool,
 }
 
 struct WaveformQueue {
@@ -21,7 +22,7 @@ struct AppState {
     waveform_queue: Arc<WaveformQueue>,
 }
 
-fn queue_missing_waveforms(folder_path: &PathBuf, queue: &Arc<WaveformQueue>) -> Result<Vec<String>, String> {
+fn queue_missing_waveforms(folder_path: &PathBuf, queue: &Arc<WaveformQueue>, normalize: bool) -> Result<Vec<String>, String> {
     let conn = collection::init_db(folder_path).map_err(|e| e.to_string())?;
     
     // Find files that don't have a waveform yet
@@ -30,20 +31,21 @@ fn queue_missing_waveforms(folder_path: &PathBuf, queue: &Arc<WaveformQueue>) ->
     ).map_err(|e| e.to_string())?;
     
     let missing_iter = stmt.query_map([], |row| {
-        Ok(WaveformTask {
-            id: row.get(0)?,
-            relative_path: row.get(1)?,
-        })
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     }).map_err(|e| e.to_string())?;
 
     let mut added_ids = Vec::new();
     let mut tasks = queue.tasks.lock().unwrap();
-    for task in missing_iter {
-        if let Ok(t) = task {
+    for row in missing_iter {
+        if let Ok((id, relative_path)) = row {
             // Avoid duplicates in queue
-            if !tasks.iter().any(|existing| existing.id == t.id) {
-                added_ids.push(t.id.clone());
-                tasks.push_back(t);
+            if !tasks.iter().any(|existing| existing.id == id) {
+                added_ids.push(id.clone());
+                tasks.push_back(WaveformTask {
+                    id,
+                    relative_path,
+                    normalize,
+                });
             }
         }
     }
@@ -67,8 +69,10 @@ fn open_collection(path: String, state: State<'_, AppState>) -> Result<(Vec<File
         *state_path = Some(folder_path.clone());
     }
 
-    // Queue missing waveforms in background
-    let missing_ids = queue_missing_waveforms(&folder_path, &state.waveform_queue).unwrap_or_default();
+    // Queue missing waveforms in background (default no normalize for existing files unless requested?)
+    // Actually, if they are missing waveforms, they might also need normalization check.
+    // But let's keep it simple: open_collection doesn't re-normalize.
+    let missing_ids = queue_missing_waveforms(&folder_path, &state.waveform_queue, false).unwrap_or_default();
 
     Ok((files, missing_ids))
 }
@@ -100,7 +104,7 @@ fn get_waveform(id: String, state: State<'_, AppState>) -> Result<Option<Vec<u8>
             let mut tasks = state.waveform_queue.tasks.lock().unwrap();
             // Remove if already in queue, then push to front
             tasks.retain(|t| t.id != id);
-            tasks.push_front(WaveformTask { id, relative_path });
+            tasks.push_front(WaveformTask { id, relative_path, normalize: false });
             state.waveform_queue.cvar.notify_all();
         }
     }
@@ -157,6 +161,7 @@ fn remove_file_from_collection(id: String, state: State<'_, AppState>) -> Result
 fn add_files_to_collection(
     files: Vec<String>, 
     action: String, 
+    normalize: bool,
     state: State<'_, AppState>
 ) -> Result<(Vec<FileItem>, Vec<String>), String> {
     let state_path = state.collection_path.lock().unwrap();
@@ -183,7 +188,7 @@ fn add_files_to_collection(
         if let Some(mut item) = collection::extract_metadata(&dest_path) {
             item.filepath = filepath_str;
             conn.execute(
-                "INSERT OR IGNORE INTO files (id, filename, filepath, format, length, size, tags) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT OR IGNORE INTO files (id, filename, filepath, format, length, size, tags, gain) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 rusqlite::params![
                     item.id,
                     item.filename,
@@ -191,14 +196,15 @@ fn add_files_to_collection(
                     item.format,
                     item.length,
                     item.size,
-                    serde_json::to_string(&item.tags).unwrap_or_else(|_| "[]".to_string())
+                    serde_json::to_string(&item.tags).unwrap_or_else(|_| "[]".to_string()),
+                    item.gain
                 ],
             ).map_err(|e| e.to_string())?;
         }
     }
     
     // Queue missing waveforms
-    let missing_ids = queue_missing_waveforms(folder_path, &state.waveform_queue).unwrap_or_default();
+    let missing_ids = queue_missing_waveforms(folder_path, &state.waveform_queue, normalize).unwrap_or_default();
     
     let files = collection::get_all_files(folder_path, &conn).map_err(|e| e.to_string())?;
     Ok((files, missing_ids))
@@ -218,7 +224,7 @@ fn regenerate_waveforms(state: State<'_, AppState>) -> Result<Vec<String>, Strin
         tasks.clear();
     }
 
-    let missing_ids = queue_missing_waveforms(folder_path, &state.waveform_queue).unwrap_or_default();
+    let missing_ids = queue_missing_waveforms(folder_path, &state.waveform_queue, false).unwrap_or_default();
     Ok(missing_ids)
 }
 
@@ -260,14 +266,28 @@ pub fn run() {
                             // Emit started event
                             let _ = handle.emit("waveform-started", task.id.clone());
 
-                            if let Some(waveform) = collection::generate_waveform(&full_path) {
+                            if let Some((waveform, peak)) = collection::generate_waveform(&full_path) {
                                 if let Ok(conn) = collection::init_db(&folder_path) {
                                     let _ = conn.execute(
                                         "INSERT OR REPLACE INTO waveforms (id, data) VALUES (?1, ?2)",
                                         rusqlite::params![task.id, waveform],
                                     );
-                                    // Emit event
-                                    let _ = handle.emit("waveform-generated", task.id);
+
+                                    let mut final_gain = 1.0;
+                                    if task.normalize {
+                                        // Peak normalization to 0.7 to allow some headroom
+                                        final_gain = if peak > 0.0 { 0.3 / peak } else { 1.0 };
+                                        let _ = conn.execute(
+                                            "UPDATE files SET gain = ?1 WHERE id = ?2",
+                                            rusqlite::params![final_gain, task.id],
+                                        );
+                                    }
+
+                                    // Emit event with gain
+                                    let _ = handle.emit("waveform-generated", serde_json::json!({
+                                        "id": task.id,
+                                        "gain": final_gain
+                                    }));
                                 }
                             }
                         }

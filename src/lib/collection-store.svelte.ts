@@ -10,6 +10,7 @@ export interface FileItem {
     length: string;
     size: string;
     tags: string[];
+    gain: number;
     selected: boolean;
     missing: boolean;
 }
@@ -50,8 +51,16 @@ class CollectionStore {
 
             // Listen for waveform generation
             listen('waveform-generated', (event) => {
-                const id = event.payload as string;
+                const payload = event.payload as { id: string, gain: number };
+                const id = payload.id;
+                const gain = payload.gain;
                 
+                // Update file gain in store
+                const file = this.files.find(f => f.id === id);
+                if (file) {
+                    file.gain = gain;
+                }
+
                 this.processingFiles.delete(id);
                 this.processingFiles = new Set(this.processingFiles); // Trigger reactivity
 
@@ -157,7 +166,7 @@ class CollectionStore {
         }
     }
 
-    async addFiles(filePaths: string[], action: 'copy' | 'move') {
+    async addFiles(filePaths: string[], action: 'copy' | 'move', normalize: boolean = true) {
         if (!this.collectionPath) return;
         const taskId = Math.random().toString(36).substring(7);
         this.addTask({
@@ -169,7 +178,11 @@ class CollectionStore {
 
         try {
             this.loading = true;
-            const [files, missingWaveforms] = await invoke<[Omit<FileItem, 'selected'>[], string[]]>('add_files_to_collection', { files: filePaths, action });
+            const [files, missingWaveforms] = await invoke<[Omit<FileItem, 'selected'>[], string[]]>('add_files_to_collection', { 
+                files: filePaths, 
+                action,
+                normalize
+            });
             this.files = files.map(f => ({ ...f, selected: false }));
             this.updateTask(taskId, { progress: 100, status: 'completed' });
 

@@ -10,14 +10,25 @@ class AudioPlayer {
 	volume = $state(1);
 	progress = $derived(this.duration > 0 ? this.currentTime / this.duration : 0);
 	private animationFrame: number | null = null;
+	
+	// Web Audio API
+	private audioCtx: AudioContext | null = null;
+	private gainNode: GainNode | null = null;
+	private sourceNode: MediaElementAudioSourceNode | null = null;
+	currentFileGain = 1.0;
 
 	constructor() {
 		if (typeof window !== 'undefined') {
 			this.audio = new Audio();
-			this.audio.volume = this.volume;
+			this.audio.crossOrigin = "anonymous";
+			
 			this.audio.addEventListener('play', () => {
 				this.isPlaying = true;
 				this.startUpdateLoop();
+				// Resume AudioContext if it's suspended
+				if (this.audioCtx?.state === 'suspended') {
+					this.audioCtx.resume();
+				}
 			});
 			this.audio.addEventListener('pause', () => {
 				this.isPlaying = false;
@@ -35,22 +46,28 @@ class AudioPlayer {
 			this.audio.addEventListener('loadedmetadata', () => {
 				if (this.audio) {
 					this.duration = this.audio.duration;
-					console.log('AudioPlayer: Metadata loaded, duration:', this.duration);
 				}
 			});
-			this.audio.addEventListener('error', (e) => {
-				console.error('AudioPlayer: Audio element error:', {
-					error: this.audio?.error,
-					src: this.audio?.src,
-					event: e
-				});
-			});
-			this.audio.addEventListener('canplay', () => {
-				console.log('AudioPlayer: Can play event fired');
-			});
-			this.audio.addEventListener('stalled', () => {
-				console.warn('AudioPlayer: Playback stalled');
-			});
+		}
+	}
+
+	private initAudioContext() {
+		if (this.audioCtx || !this.audio) return;
+
+		this.audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+		this.gainNode = this.audioCtx.createGain();
+		this.sourceNode = this.audioCtx.createMediaElementSource(this.audio);
+		
+		this.sourceNode.connect(this.gainNode);
+		this.gainNode.connect(this.audioCtx.destination);
+		
+		this.updateEffectiveGain();
+	}
+
+	private updateEffectiveGain() {
+		if (this.gainNode) {
+			// Web Audio API allows gain > 1.0
+			this.gainNode.gain.value = this.volume * this.currentFileGain;
 		}
 	}
 
@@ -75,31 +92,27 @@ class AudioPlayer {
 	}
 
 	async play(file: FileItem) {
-		if (!this.audio || !collectionStore.collectionPath) {
-			console.error('AudioPlayer: No audio element or collection path', { audio: !!this.audio, path: collectionStore.collectionPath });
-			return;
+		if (!this.audio || !collectionStore.collectionPath) return;
+
+		if (!this.audioCtx) {
+			this.initAudioContext();
 		}
+
+		this.currentFileGain = file.gain || 1.0;
+		this.updateEffectiveGain();
 
 		if (this.currentFileId !== file.id) {
 			this.currentFileId = file.id;
-			
-			// Normalize path to avoid mixed slashes and ensuring it's absolute
 			let fullPath = `${collectionStore.collectionPath}/${file.filepath}`;
-			// Basic normalization: replace multiple slashes and backslashes with a single slash
 			fullPath = fullPath.replace(/[\\\/]+/g, '/');
 			
-			// On Windows, if it's an absolute path like C:/... ensure it starts correctly
-			// but usually the regex above is fine.
-			
 			const assetUrl = convertFileSrc(fullPath);
-			console.log('AudioPlayer: Playing', { filename: file.filename, fullPath, assetUrl });
 			this.audio.src = assetUrl;
 			this.audio.load();
 		}
 
 		try {
 			await this.audio.play();
-			console.log('AudioPlayer: Playback started');
 		} catch (e) {
 			console.error('AudioPlayer: Playback failed:', e);
 		}
@@ -134,9 +147,7 @@ class AudioPlayer {
 
 	setVolume(v: number) {
 		this.volume = Math.max(0, Math.min(1, v));
-		if (this.audio) {
-			this.audio.volume = this.volume;
-		}
+		this.updateEffectiveGain();
 	}
 
 	next() {

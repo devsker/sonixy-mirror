@@ -30,7 +30,7 @@
 			await collectionStore.confirmRelocate(action);
 		} else if (dropPaths.length > 0) {
 			showDropPrompt = false;
-			await collectionStore.addFiles(dropPaths, action);
+			await collectionStore.addFiles(dropPaths, action, settingsState.normalizeOnImport);
 			dropPaths = [];
 		}
 	}
@@ -45,6 +45,7 @@
 	const settingsState = $state({
 		theme: 'system',
 		showCheckboxes: false,
+		normalizeOnImport: true,
 		columnOrder: ['filename', 'format', 'length', 'size', 'tags']
 	});
 
@@ -67,6 +68,7 @@
 				const parsed = JSON.parse(savedSettings);
 				settingsState.theme = parsed.theme || 'system';
 				settingsState.showCheckboxes = parsed.showCheckboxes ?? false;
+				settingsState.normalizeOnImport = parsed.normalizeOnImport ?? true;
 				settingsState.columnOrder = parsed.columnOrder || ['filename', 'format', 'length', 'size', 'tags'];
 			} catch (e) {
 				console.error('Failed to parse settings', e);
@@ -92,6 +94,7 @@
 		localStorage.setItem('settings', JSON.stringify({
 			theme: settingsState.theme,
 			showCheckboxes: settingsState.showCheckboxes,
+			normalizeOnImport: settingsState.normalizeOnImport,
 			columnOrder: settingsState.columnOrder
 		}));
 		applyTheme(settingsState.theme);

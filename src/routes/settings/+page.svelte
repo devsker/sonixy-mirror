@@ -6,6 +6,7 @@
 
 	let theme = $derived(settings.theme);
 	let showCheckboxes = $derived(settings.showCheckboxes);
+	let normalizeOnImport = $derived(settings.normalizeOnImport);
 	
 	function handleThemeChange(e) {
 		settings.theme = e.target.value;
@@ -13,6 +14,10 @@
 
 	function handleCheckboxToggle(e) {
 		settings.showCheckboxes = e.target.checked;
+	}
+
+	function handleNormalizeToggle(e) {
+		settings.normalizeOnImport = e.target.checked;
 	}
 </script>
 
@@ -63,6 +68,22 @@
 		<section class="settings-section">
 			<h2>Collection</h2>
 			
+			<div class="setting-item">
+				<div class="checkbox-setting">
+					<label class="custom-checkbox">
+						<input 
+							type="checkbox" 
+							id="normalizeOnImport" 
+							checked={normalizeOnImport} 
+							onchange={handleNormalizeToggle} 
+						/>
+						<span class="checkmark"></span>
+					</label>
+					<label for="normalizeOnImport" class="checkbox-label">Normalize on Import</label>
+				</div>
+				<p class="description">Automatically normalize audio files when adding them to the collection. This is a non-destructive process that calculates the peak volume for playback.</p>
+			</div>
+
 			<div class="setting-item">
 				<label>Waveforms</label>
 				<button class="reset-btn" onclick={() => collectionStore.regenerateWaveforms()}>
