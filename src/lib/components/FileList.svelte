@@ -114,6 +114,48 @@
 		}
 	}
 
+	// Column definitions
+	const columnConfigs: Record<string, { label: string; sortable?: boolean; filterable?: 'format' | 'tags' }> = {
+		filename: { label: 'Filename', sortable: true },
+		format: { label: 'Format', filterable: 'format' },
+		length: { label: 'Length', sortable: true },
+		size: { label: 'Size', sortable: true },
+		tags: { label: 'Tags', filterable: 'tags' }
+	};
+
+	let draggingColumn = $state<string | null>(null);
+
+	function handleDragStart(event: DragEvent, id: string) {
+		draggingColumn = id;
+		if (event.dataTransfer) {
+			event.dataTransfer.effectAllowed = 'move';
+			event.dataTransfer.setData('text/plain', id);
+		}
+	}
+
+	function handleDragOver(event: DragEvent, targetId: string) {
+		event.preventDefault();
+		if (event.dataTransfer) {
+			event.dataTransfer.dropEffect = 'move';
+		}
+		
+		if (draggingColumn && draggingColumn !== targetId) {
+			const fromIndex = settings.columnOrder.indexOf(draggingColumn);
+			const toIndex = settings.columnOrder.indexOf(targetId);
+			
+			if (fromIndex !== -1 && toIndex !== -1) {
+				const newOrder = [...settings.columnOrder];
+				newOrder.splice(fromIndex, 1);
+				newOrder.splice(toIndex, 0, draggingColumn);
+				settings.columnOrder = newOrder;
+			}
+		}
+	}
+
+	function handleDragEnd() {
+		draggingColumn = null;
+	}
+
 	function toggleSort(col: string) {
 		if (sortColumn === col) {
 			if (sortDirection === 'asc') sortDirection = 'desc';
@@ -194,130 +236,96 @@
 						</label>
 					</th>
 				{/if}
-				<th 
-					class="filename-col sortable" 
-					onclick={() => toggleSort('filename')}
-					onkeydown={(e) => e.key === 'Enter' && toggleSort('filename')}
-					role="button"
-					tabindex="0"
-				>
-					<div class="header-content">
-						<span>Filename</span>
-						{#if sortColumn === 'filename'}
-							<span class="status-icon">
-								{#if sortDirection === 'asc'}<ChevronUp size={14} />{:else}<ChevronDown size={14} />{/if}
-							</span>
-						{/if}
-					</div>
-				</th>
-				<th 
-					class="format-col filterable" 
-					onclick={(e) => toggleFilterPopover('format', e)}
-					onkeydown={(e) => e.key === 'Enter' && toggleFilterPopover('format', e as any)}
-					role="button"
-					tabindex="0"
-				>
-					<div class="header-content">
-						<span>Format</span>
-						{#if selectedFormats.length > 0}
-							<span class="status-icon active"><Filter size={12} /></span>
-						{/if}
-						{#if activePopover === 'format'}
-							<div 
-								class="popover" 
-								onclick={(e) => e.stopPropagation()}
-								onkeydown={(e) => e.stopPropagation()}
-								role="presentation"
-							>
-								<div class="popover-header">Filter Formats</div>
-								<div class="popover-list">
-									{#each allFormats as format}
-										<label class="popover-item">
-											<div class="custom-checkbox">
-												<input type="checkbox" checked={selectedFormats.includes(format)} onchange={() => toggleFormatFilter(format)} />
-												<span class="checkmark"></span>
-											</div>
-											<span class="item-label">{format}</span>
-										</label>
-									{/each}
+				{#each settings.columnOrder as columnId (columnId)}
+					{@const config = columnConfigs[columnId]}
+					<th 
+						class="{columnId}-col" 
+						class:sortable={config.sortable}
+						class:filterable={!!config.filterable}
+						class:dragging={draggingColumn === columnId}
+						onclick={(e) => {
+							if (config.sortable) toggleSort(columnId);
+							else if (config.filterable) toggleFilterPopover(config.filterable, e);
+						}}
+						onkeydown={(e) => {
+							if (e.key === 'Enter') {
+								if (config.sortable) toggleSort(columnId);
+								else if (config.filterable) toggleFilterPopover(config.filterable, e as any);
+							}
+						}}
+						draggable="true"
+						ondragstart={(e) => handleDragStart(e, columnId)}
+						ondragover={(e) => handleDragOver(e, columnId)}
+						ondragenter={(e) => e.preventDefault()}
+						ondragend={handleDragEnd}
+						role="button"
+						tabindex="0"
+					>
+						<div class="header-content">
+							<span>{config.label}</span>
+							{#if config.sortable && sortColumn === columnId}
+								<span class="status-icon">
+									{#if sortDirection === 'asc'}<ChevronUp size={14} />{:else}<ChevronDown size={14} />{/if}
+								</span>
+							{/if}
+							{#if config.filterable === 'format' && selectedFormats.length > 0}
+								<span class="status-icon active"><Filter size={12} /></span>
+							{/if}
+							{#if config.filterable === 'tags' && selectedTags.length > 0}
+								<span class="status-icon active"><Filter size={12} /></span>
+							{/if}
+
+							{#if config.filterable === 'format' && activePopover === 'format'}
+								<div 
+									class="popover" 
+									onclick={(e) => e.stopPropagation()}
+									onkeydown={(e) => e.stopPropagation()}
+									role="presentation"
+								>
+									<div class="popover-header">Filter Formats</div>
+									<div class="popover-list">
+										{#each allFormats as format}
+											<label class="popover-item">
+												<div class="custom-checkbox">
+													<input type="checkbox" checked={selectedFormats.includes(format)} onchange={() => toggleFormatFilter(format)} />
+													<span class="checkmark"></span>
+												</div>
+												<span class="item-label">{format}</span>
+											</label>
+										{/each}
+									</div>
+									{#if selectedFormats.length > 0}
+										<button class="clear-btn" onclick={() => selectedFormats = []}>Clear All</button>
+									{/if}
 								</div>
-								{#if selectedFormats.length > 0}
-									<button class="clear-btn" onclick={() => selectedFormats = []}>Clear All</button>
-								{/if}
-							</div>
-						{/if}
-					</div>
-				</th>
-				<th 
-					class="length-col sortable" 
-					onclick={() => toggleSort('length')}
-					onkeydown={(e) => e.key === 'Enter' && toggleSort('length')}
-					role="button"
-					tabindex="0"
-				>
-					<div class="header-content">
-						<span>Length</span>
-						{#if sortColumn === 'length'}
-							<span class="status-icon">
-								{#if sortDirection === 'asc'}<ChevronUp size={14} />{:else}<ChevronDown size={14} />{/if}
-							</span>
-						{/if}
-					</div>
-				</th>
-				<th 
-					class="size-col sortable" 
-					onclick={() => toggleSort('size')}
-					onkeydown={(e) => e.key === 'Enter' && toggleSort('size')}
-					role="button"
-					tabindex="0"
-				>
-					<div class="header-content">
-						<span>Size</span>
-						{#if sortColumn === 'size'}
-							<span class="status-icon">
-								{#if sortDirection === 'asc'}<ChevronUp size={14} />{:else}<ChevronDown size={14} />{/if}
-							</span>
-						{/if}
-					</div>
-				</th>
-				<th 
-					class="tags-col filterable" 
-					onclick={(e) => toggleFilterPopover('tags', e)}
-					onkeydown={(e) => e.key === 'Enter' && toggleFilterPopover('tags', e as any)}
-					role="button"
-					tabindex="0"
-				>
-					<div class="header-content">
-						<span>Tags</span>
-						{#if selectedTags.length > 0}
-							<span class="status-icon active"><Filter size={12} /></span>
-						{/if}
-						{#if activePopover === 'tags'}
-							<div 
-								class="popover" 
-								onclick={(e) => e.stopPropagation()}
-								onkeydown={(e) => e.stopPropagation()}
-								role="presentation"
-							>
-								<div class="popover-header">Filter Tags</div>
-								<div class="popover-list">
-									{#each allTags as tag}
-										<label class="popover-item">
-											<div class="custom-checkbox">
-												<input type="checkbox" checked={selectedTags.includes(tag)} onchange={() => toggleTagFilter(tag)} />
-												<span class="checkmark"></span>
-											</div>
-											<span class="item-label">{tag}</span>
-										</label>
-									{/each}
+							{/if}
+							{#if config.filterable === 'tags' && activePopover === 'tags'}
+								<div 
+									class="popover" 
+									onclick={(e) => e.stopPropagation()}
+									onkeydown={(e) => e.stopPropagation()}
+									role="presentation"
+								>
+									<div class="popover-header">Filter Tags</div>
+									<div class="popover-list">
+										{#each allTags as tag}
+											<label class="popover-item">
+												<div class="custom-checkbox">
+													<input type="checkbox" checked={selectedTags.includes(tag)} onchange={() => toggleTagFilter(tag)} />
+													<span class="checkmark"></span>
+												</div>
+												<span class="item-label">{tag}</span>
+											</label>
+										{/each}
+									</div>
+									{#if selectedTags.length > 0}
+										<button class="clear-btn" onclick={() => selectedTags = []}>Clear All</button>
+									{/if}
 								</div>
-								{#if selectedTags.length > 0}
-									<button class="clear-btn" onclick={() => selectedTags = []}>Clear All</button>
-								{/if}
-							</div>
-						{/if}
-					</div>
-				</th>
+							{/if}
+						</div>
+					</th>
+				{/each}
 			</tr>
 		</thead>
 		<tbody>
@@ -341,49 +349,57 @@
 							</label>
 						</td>
 					{/if}
-					<td class="filename-col" title={file.filename}>
-						<div class="name-wrapper">
-							{#if file.missing}
-								<span class="warning-icon" title="File not found">
-									<AlertTriangle size={14} />
-								</span>
-							{/if}
-							<span>{file.filename}</span>
-						</div>
-					</td>
-					<td class="format-col">
-						{#if file.missing}
-							<div class="missing-actions">
-								<button 
-									class="action-icon" 
-									onclick={(e) => { e.stopPropagation(); collectionStore.relocateFile(file.id); }}
-									title="Locate file"
-								>
-									<Search size={14} />
-								</button>
-								<button 
-									class="action-icon danger" 
-									onclick={(e) => { e.stopPropagation(); collectionStore.removeFile(file.id); }}
-									title="Remove from collection"
-								>
-									<Trash2 size={14} />
-								</button>
-							</div>
-						{:else}
-							{file.format}
+					{#each settings.columnOrder as columnId (columnId)}
+						{#if columnId === 'filename'}
+							<td class="filename-col" title={file.filename}>
+								<div class="name-wrapper">
+									{#if file.missing}
+										<span class="warning-icon" title="File not found">
+											<AlertTriangle size={14} />
+										</span>
+									{/if}
+									<span>{file.filename}</span>
+								</div>
+							</td>
+						{:else if columnId === 'format'}
+							<td class="format-col">
+								{#if file.missing}
+									<div class="missing-actions">
+										<button 
+											class="action-icon" 
+											onclick={(e) => { e.stopPropagation(); collectionStore.relocateFile(file.id); }}
+											title="Locate file"
+										>
+											<Search size={14} />
+										</button>
+										<button 
+											class="action-icon danger" 
+											onclick={(e) => { e.stopPropagation(); collectionStore.removeFile(file.id); }}
+											title="Remove from collection"
+										>
+											<Trash2 size={14} />
+										</button>
+									</div>
+								{:else}
+									{file.format}
+								{/if}
+							</td>
+						{:else if columnId === 'length'}
+							<td class="length-col">{file.missing ? '-' : file.length}</td>
+						{:else if columnId === 'size'}
+							<td class="size-col">{file.missing ? '-' : file.size}</td>
+						{:else if columnId === 'tags'}
+							<td class="tags-col">
+								{#if !file.missing}
+									<div class="tags-wrapper">
+										{#each file.tags as tag}
+											<span class="tag">{tag}</span>
+										{/each}
+									</div>
+								{/if}
+							</td>
 						{/if}
-					</td>
-					<td class="length-col">{file.missing ? '-' : file.length}</td>
-					<td class="size-col">{file.missing ? '-' : file.size}</td>
-					<td class="tags-col">
-						{#if !file.missing}
-							<div class="tags-wrapper">
-								{#each file.tags as tag}
-									<span class="tag">{tag}</span>
-								{/each}
-							</div>
-						{/if}
-					</td>
+					{/each}
 				</tr>
 			{/each}
 		</tbody>
@@ -452,13 +468,22 @@
 
 	th.sortable .header-content,
 	th.filterable .header-content {
-		cursor: pointer;
+		cursor: grab;
+	}
+
+	th.dragging .header-content {
+		cursor: grabbing;
 	}
 
 	th.sortable:hover .header-content,
 	th.filterable:hover .header-content {
 		background-color: rgba(0, 0, 0, 0.03);
 		color: var(--text-color);
+	}
+
+	th.dragging {
+		opacity: 0.5;
+		background-color: var(--border-color);
 	}
 
 	:global(html.dark) th.sortable:hover .header-content,

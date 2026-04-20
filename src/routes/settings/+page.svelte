@@ -49,6 +49,14 @@
 				</div>
 				<p class="description">Show or hide the selection checkboxes in the file list.</p>
 			</div>
+
+			<div class="setting-item">
+				<label>Column Order</label>
+				<button class="reset-btn" onclick={() => settings.columnOrder = ['filename', 'format', 'length', 'size', 'tags']}>
+					Reset Column Order
+				</button>
+				<p class="description">Reset the file list columns to their default order.</p>
+			</div>
 		</section>
 
 		<section class="settings-section">
@@ -95,6 +103,31 @@
 	.checkbox-label {
 		font-size: 0.95rem;
 		cursor: pointer;
+	}
+
+	.reset-btn {
+		background-color: var(--sidebar-bg);
+		color: var(--text-color);
+		border: 1px solid var(--border-color);
+		padding: 8px 16px;
+		border-radius: 4px;
+		font-size: 0.9rem;
+		cursor: pointer;
+		width: fit-content;
+		transition: background-color 0.2s, border-color 0.2s;
+	}
+
+	.reset-btn:hover {
+		background-color: var(--border-color);
+		border-color: var(--icon-color);
+	}
+
+	.reset-btn:active {
+		background-color: rgba(0, 0, 0, 0.05);
+	}
+
+	:global(html.dark) .reset-btn:active {
+		background-color: rgba(255, 255, 255, 0.05);
 	}
 
 	.description {

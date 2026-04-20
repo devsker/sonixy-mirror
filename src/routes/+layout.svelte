@@ -44,7 +44,8 @@
 	// Use a reactive object for the settings state to ensure context consumers stay in sync
 	const settingsState = $state({
 		theme: 'system',
-		showCheckboxes: false
+		showCheckboxes: false,
+		columnOrder: ['filename', 'format', 'length', 'size', 'tags']
 	});
 
 	function applyTheme(value) {
@@ -66,6 +67,7 @@
 				const parsed = JSON.parse(savedSettings);
 				settingsState.theme = parsed.theme || 'system';
 				settingsState.showCheckboxes = parsed.showCheckboxes ?? false;
+				settingsState.columnOrder = parsed.columnOrder || ['filename', 'format', 'length', 'size', 'tags'];
 			} catch (e) {
 				console.error('Failed to parse settings', e);
 			}
@@ -89,7 +91,8 @@
 	$effect(() => {
 		localStorage.setItem('settings', JSON.stringify({
 			theme: settingsState.theme,
-			showCheckboxes: settingsState.showCheckboxes
+			showCheckboxes: settingsState.showCheckboxes,
+			columnOrder: settingsState.columnOrder
 		}));
 		applyTheme(settingsState.theme);
 	});
