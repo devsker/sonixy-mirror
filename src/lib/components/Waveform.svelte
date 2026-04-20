@@ -74,7 +74,7 @@
 				<stop offset="100%" stop-color={color} stop-opacity="0.8" />
 			</linearGradient>
 		</defs>
-		{#each data as barHeight, i}
+		{#each data as barHeight, i (i)}
 			<rect
 				class="bar"
 				x={i * 4}

@@ -33,7 +33,7 @@ class CollectionStore {
         try {
             this.loading = true;
             this.collectionPath = path;
-            const result = await invoke<any[]>('open_collection', { path });
+            const result = await invoke<Omit<FileItem, 'selected'>[]>('open_collection', { path });
             this.files = result.map(f => ({ ...f, selected: false }));
             localStorage.setItem('lastCollectionPath', path);
         } catch (e) {
@@ -65,7 +65,7 @@ class CollectionStore {
         if (!this.collectionPath) return;
         try {
             this.loading = true;
-            const result = await invoke<any[]>('get_collection_files');
+            const result = await invoke<Omit<FileItem, 'selected'>[]>('get_collection_files');
             this.files = result.map(f => ({ ...f, selected: false }));
         } catch (e) {
             console.error('Failed to refresh collection', e);
@@ -78,7 +78,7 @@ class CollectionStore {
         if (!this.collectionPath) return;
         try {
             this.loading = true;
-            const result = await invoke<any[]>('add_files_to_collection', { files: filePaths, action });
+            const result = await invoke<Omit<FileItem, 'selected'>[]>('add_files_to_collection', { files: filePaths, action });
             this.files = result.map(f => ({ ...f, selected: false }));
         } catch (e) {
             console.error('Failed to add files', e);
@@ -102,7 +102,7 @@ class CollectionStore {
                 if (this.collectionPath && selected.startsWith(this.collectionPath)) {
                     // Already in collection folder, just link it
                     this.loading = true;
-                    const result = await invoke<any[]>('relocate_file', { 
+                    const result = await invoke<Omit<FileItem, 'selected'>[]>('relocate_file', { 
                         id, 
                         newPath: selected,
                         action: 'link'
@@ -113,7 +113,7 @@ class CollectionStore {
                     this.pendingRelocate = { id, path: selected };
                 }
             }
-        } catch (e: any) {
+        } catch (e) {
             console.error('Failed to relocate file', e);
         } finally {
             this.loading = false;
@@ -125,10 +125,10 @@ class CollectionStore {
         try {
             this.loading = true;
             const { id, path } = this.pendingRelocate;
-            const result = await invoke<any[]>('relocate_file', { id, newPath: path, action });
+            const result = await invoke<Omit<FileItem, 'selected'>[]>('relocate_file', { id, newPath: path, action });
             this.files = result.map(f => ({ ...f, selected: false }));
             this.pendingRelocate = null;
-        } catch (e: any) {
+        } catch (e) {
             console.error('Failed to complete relocation', e);
         } finally {
             this.loading = false;
@@ -139,7 +139,7 @@ class CollectionStore {
         if (!confirm('Are you sure you want to remove this file from the collection?')) return;
         try {
             this.loading = true;
-            const result = await invoke<any[]>('remove_file_from_collection', { id });
+            const result = await invoke<Omit<FileItem, 'selected'>[]>('remove_file_from_collection', { id });
             this.files = result.map(f => ({ ...f, selected: false }));
         } catch (e) {
             console.error('Failed to remove file', e);

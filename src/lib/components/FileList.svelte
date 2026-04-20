@@ -1,9 +1,15 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
 	import { ChevronUp, ChevronDown, Filter, FolderOpen, Loader2, AlertTriangle, Trash2, Search } from 'lucide-svelte';
-	import { collectionStore } from '$lib/collection-store.svelte';
+	import { collectionStore, type FileItem } from '$lib/collection-store.svelte';
 
-	const settings = getContext<any>('settings-context');
+	interface SettingsState {
+		theme: string;
+		showCheckboxes: boolean;
+		columnOrder: string[];
+	}
+
+	const settings = getContext<SettingsState>('settings-context');
 	let showCheckboxes = $derived(settings?.showCheckboxes ?? false);
 
 	let { onSelectionChange }: { onSelectionChange?: (ids: string[]) => void } = $props();
@@ -58,23 +64,29 @@
 
 		// Apply Sorting
 		if (sortColumn) {
-			result.sort((a: any, b: any) => {
-				let valA = a[sortColumn!];
-				let valB = b[sortColumn!];
+			result.sort((a, b) => {
+				const valA = a[sortColumn as keyof FileItem];
+				const valB = b[sortColumn as keyof FileItem];
 
-				if (sortColumn === 'length') {
-					valA = parseDuration(valA);
-					valB = parseDuration(valB);
-				} else if (sortColumn === 'size') {
-					valA = parseSize(valA);
-					valB = parseSize(valB);
-				} else if (typeof valA === 'string') {
-					valA = valA.toLowerCase();
-					valB = valB.toLowerCase();
+				let compareA: string | number;
+				let compareB: string | number;
+
+				if (sortColumn === 'length' && typeof valA === 'string' && typeof valB === 'string') {
+					compareA = parseDuration(valA);
+					compareB = parseDuration(valB);
+				} else if (sortColumn === 'size' && typeof valA === 'string' && typeof valB === 'string') {
+					compareA = parseSize(valA);
+					compareB = parseSize(valB);
+				} else if (typeof valA === 'string' && typeof valB === 'string') {
+					compareA = valA.toLowerCase();
+					compareB = valB.toLowerCase();
+				} else {
+					compareA = String(valA);
+					compareB = String(valB);
 				}
 
-				if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
-				if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+				if (compareA < compareB) return sortDirection === 'asc' ? -1 : 1;
+				if (compareA > compareB) return sortDirection === 'asc' ? 1 : -1;
 				return 0;
 			});
 		}
@@ -250,7 +262,7 @@
 						onkeydown={(e) => {
 							if (e.key === 'Enter') {
 								if (config.sortable) toggleSort(columnId);
-								else if (config.filterable) toggleFilterPopover(config.filterable, e as any);
+								else if (config.filterable) toggleFilterPopover(config.filterable, e as unknown as MouseEvent);
 							}
 						}}
 						draggable="true"
@@ -284,7 +296,7 @@
 								>
 									<div class="popover-header">Filter Formats</div>
 									<div class="popover-list">
-										{#each allFormats as format}
+										{#each allFormats as format (format)}
 											<label class="popover-item">
 												<div class="custom-checkbox">
 													<input type="checkbox" checked={selectedFormats.includes(format)} onchange={() => toggleFormatFilter(format)} />
@@ -308,7 +320,7 @@
 								>
 									<div class="popover-header">Filter Tags</div>
 									<div class="popover-list">
-										{#each allTags as tag}
+										{#each allTags as tag (tag)}
 											<label class="popover-item">
 												<div class="custom-checkbox">
 													<input type="checkbox" checked={selectedTags.includes(tag)} onchange={() => toggleTagFilter(tag)} />
@@ -334,7 +346,7 @@
 					class:selected={file.selected} 
 					class:missing={file.missing}
 					onclick={(e) => handleSelection(e, i)}
-					onkeydown={(e) => e.key === 'Enter' && handleSelection(e as any, i)}
+					onkeydown={(e) => e.key === 'Enter' && handleSelection(e as unknown as MouseEvent, i)}
 					tabindex="0"
 				>
 					{#if showCheckboxes}
@@ -343,7 +355,7 @@
 								<input 
 									type="checkbox" 
 									checked={file.selected} 
-									onchange={(e) => handleSelection(e as any, i)}
+									onchange={(e) => handleSelection(e as unknown as MouseEvent, i)}
 								/>
 								<span class="checkmark"></span>
 							</label>
@@ -392,7 +404,7 @@
 							<td class="tags-col">
 								{#if !file.missing}
 									<div class="tags-wrapper">
-										{#each file.tags as tag}
+										{#each file.tags as tag (tag)}
 											<span class="tag">{tag}</span>
 										{/each}
 									</div>
