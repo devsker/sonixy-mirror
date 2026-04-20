@@ -54,6 +54,10 @@
 		return num;
 	}
 
+	function getDisplayName(filename: string) {
+		return filename.replace(/\.[^/.]+$/, '');
+	}
+
 	let filteredAndSortedFiles = $derived(() => {
 		let result = [...files];
 
@@ -389,7 +393,7 @@
 											<AlertTriangle size={14} />
 										</span>
 									{/if}
-									<span class:playing={audioPlayer.currentFileId === file.id}>{file.filename}</span>
+									<span class:playing={audioPlayer.currentFileId === file.id}>{getDisplayName(file.filename)}</span>
 								</div>
 							</td>
 						{:else if columnId === 'format'}
