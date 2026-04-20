@@ -3,6 +3,7 @@
 	import { listen } from '@tauri-apps/api/event';
 	import { onMount } from 'svelte';
 	import { fade } from 'svelte/transition';
+	import { audioPlayer } from '$lib/audio-player.svelte';
 
 	interface Props {
 		height?: number;
@@ -58,6 +59,13 @@
 	// Use an array of 256 zeros as a fallback to allow smooth transitions from/to "empty"
 	const data = $derived(waveformData || Array(256).fill(0));
 	const barsCount = $derived(data.length);
+
+	function handleSeek(e: MouseEvent) {
+		if (audioPlayer.currentFileId !== id) return;
+		const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
+		const percent = (e.clientX - rect.left) / rect.width;
+		audioPlayer.seek(percent);
+	}
 </script>
 
 <div class="waveform-container" style="height: {height}px">
@@ -66,22 +74,30 @@
 		preserveAspectRatio="none"
 		class="waveform-svg"
 		class:hidden={!waveformData && !isLoading}
+		onclick={handleSeek}
+		role="presentation"
 	>
 		<defs>
 			<linearGradient id="waveformGradient" x1="0" y1="0" x2="0" y2="1">
+				<stop offset="0%" stop-color={color} stop-opacity="0.4" />
+				<stop offset="50%" stop-color={color} stop-opacity="0.6" />
+				<stop offset="100%" stop-color={color} stop-opacity="0.4" />
+			</linearGradient>
+			<linearGradient id="waveformPlayedGradient" x1="0" y1="0" x2="0" y2="1">
 				<stop offset="0%" stop-color={color} stop-opacity="0.8" />
 				<stop offset="50%" stop-color={color} stop-opacity="1" />
 				<stop offset="100%" stop-color={color} stop-opacity="0.8" />
 			</linearGradient>
 		</defs>
 		{#each data as barHeight, i (i)}
+			{@const isPlayed = audioPlayer.currentFileId === id && i / barsCount <= audioPlayer.progress}
 			<rect
 				class="bar"
 				x={i * 4}
 				y={50 - (barHeight * 100) / 2}
 				width="2.5"
 				height={barHeight * 100}
-				fill="url(#waveformGradient)"
+				fill={isPlayed ? 'url(#waveformPlayedGradient)' : 'url(#waveformGradient)'}
 				rx="1.25"
 			/>
 		{/each}
@@ -114,6 +130,7 @@
 		height: 100%;
 		opacity: 0.9;
 		transition: opacity 0.3s ease;
+		cursor: pointer;
 	}
 
 	.waveform-svg.hidden {

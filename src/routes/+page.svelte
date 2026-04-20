@@ -2,23 +2,30 @@
 	import FileList from '$lib/components/FileList.svelte';
 	import Waveform from '$lib/components/Waveform.svelte';
 	import { collectionStore } from '$lib/collection-store.svelte';
+	import { audioPlayer } from '$lib/audio-player.svelte';
 
 	let selectedIds = $state([]);
 
-	function handleSelectionChange(ids) {
+	function handleSelectionChange(ids: string[]) {
 		selectedIds = ids;
 	}
+
+    let displayId = $derived(
+        selectedIds.length === 1 
+            ? selectedIds[0] 
+            : (selectedIds.length === 0 ? audioPlayer.currentFileId : null)
+    );
 </script>
 
 <div class="page-container">
 	{#if collectionStore.collectionPath}
 		<div class="waveform-section">
-			{#if selectedIds.length === 0}
-				<div class="selection-message">No file selected</div>
-			{:else if selectedIds.length === 1}
-				<Waveform id={selectedIds[0]} />
-			{:else}
+			{#if displayId}
+				<Waveform id={displayId} />
+			{:else if selectedIds.length > 1}
 				<div class="selection-message">More than one file selected</div>
+            {:else}
+				<div class="selection-message">No file selected</div>
 			{/if}
 		</div>
 	{/if}

@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import { Minus, Square, X, RefreshCw, CheckCircle2, AlertCircle, Loader2 } from 'lucide-svelte';
+	import { Minus, Square, X, RefreshCw, CheckCircle2, AlertCircle, Loader2, Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Volume1 } from 'lucide-svelte';
 	import { collectionStore } from '$lib/collection-store.svelte';
+	import { audioPlayer } from '$lib/audio-player.svelte';
 
 	const appWindow = getCurrentWindow();
     let loading = $derived(collectionStore.loading);
@@ -15,6 +16,10 @@
             ? tasks.reduce((acc, t) => acc + t.progress, 0) / tasks.length 
             : 0
     );
+
+    let isPlaying = $derived(audioPlayer.isPlaying);
+    let volume = $derived(audioPlayer.volume);
+    let currentFileId = $derived(audioPlayer.currentFileId);
 
 	async function minimize() {
 		await appWindow.minimize();
@@ -40,6 +45,12 @@
     function closeTasks() {
         showTasks = false;
     }
+
+    function handleVolumeWheel(e: WheelEvent) {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -0.05 : 0.05;
+        audioPlayer.setVolume(audioPlayer.volume + delta);
+    }
 </script>
 
 <svelte:window onclick={closeTasks} />
@@ -48,6 +59,44 @@
 	<div data-tauri-drag-region class="title-section">
 		<span class="title">Sonixy</span>
 	</div>
+
+    <div class="playback-controls">
+        <button class="playback-btn" onclick={() => audioPlayer.previous()} aria-label="Previous">
+            <SkipBack size={14} fill="currentColor" />
+        </button>
+        <button class="playback-btn play-pause" onclick={() => audioPlayer.toggle()} aria-label={isPlaying ? 'Pause' : 'Play'}>
+            {#if isPlaying}
+                <Pause size={16} fill="currentColor" />
+            {:else}
+                <Play size={16} fill="currentColor" />
+            {/if}
+        </button>
+        <button class="playback-btn" onclick={() => audioPlayer.next()} aria-label="Next">
+            <SkipForward size={14} fill="currentColor" />
+        </button>
+
+        <div class="volume-control" onwheel={handleVolumeWheel}>
+            <button class="playback-btn volume-btn" onclick={() => audioPlayer.setVolume(volume === 0 ? 1 : 0)}>
+                {#if volume === 0}
+                    <VolumeX size={14} />
+                {:else if volume < 0.5}
+                    <Volume1 size={14} />
+                {:else}
+                    <Volume2 size={14} />
+                {/if}
+            </button>
+            <input 
+                type="range" 
+                min="0" 
+                max="1" 
+                step="0.01" 
+                value={volume} 
+                oninput={(e) => audioPlayer.setVolume(parseFloat(e.currentTarget.value))}
+                class="volume-slider"
+            />
+        </div>
+    </div>
+
 	<div class="controls">
         {#if collectionPath}
             <div class="task-container" onclick={(e) => e.stopPropagation()}>
@@ -174,6 +223,86 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
+
+    .playback-controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 16px;
+        height: 100%;
+    }
+
+    .playback-btn {
+        display: inline-flex;
+        justify-content: center;
+        align-items: center;
+        width: 28px;
+        height: 28px;
+        border: none;
+        background: transparent;
+        color: var(--icon-color);
+        cursor: default;
+        border-radius: 4px;
+        transition: background-color 0.1s, color 0.1s;
+    }
+
+    .playback-btn:hover {
+        background: rgba(0, 0, 0, 0.05);
+        color: var(--icon-hover);
+    }
+
+    :global(html.dark) .playback-btn:hover {
+        background: rgba(255, 255, 255, 0.05);
+    }
+
+    .playback-btn.play-pause {
+        color: var(--text-main);
+    }
+
+    .volume-control {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        margin-left: 12px;
+        padding-left: 12px;
+        border-left: 1px solid var(--border-color);
+        height: 16px;
+    }
+
+    .volume-slider {
+        width: 60px;
+        height: 3px;
+        -webkit-appearance: none;
+        background: rgba(0, 0, 0, 0.1);
+        border-radius: 2px;
+        outline: none;
+        cursor: pointer;
+    }
+
+    :global(html.dark) .volume-slider {
+        background: rgba(255, 255, 255, 0.1);
+    }
+
+    .volume-slider::-webkit-slider-runnable-track {
+        height: 3px;
+    }
+
+    .volume-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 10px;
+        height: 10px;
+        margin-top: -3.5px;
+        background: var(--text-muted);
+        border-radius: 50%;
+        cursor: pointer;
+        transition: background 0.1s, transform 0.1s;
+        border: none;
+    }
+
+    .volume-slider:hover::-webkit-slider-thumb {
+        background: var(--accent-color, #3b82f6);
+        transform: scale(1.2);
+    }
 
 	.controls {
 		display: flex;

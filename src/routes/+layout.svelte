@@ -48,7 +48,7 @@
 		columnOrder: ['filename', 'format', 'length', 'size', 'tags']
 	});
 
-	function applyTheme(value) {
+	function applyTheme(value: string) {
 		const root = document.documentElement;
 		root.classList.remove('light', 'dark');
 

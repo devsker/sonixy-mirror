@@ -2,6 +2,7 @@
 	import { getContext } from 'svelte';
 	import { ChevronUp, ChevronDown, Filter, FolderOpen, Loader2, AlertTriangle, Trash2, Search, Circle } from 'lucide-svelte';
 	import { collectionStore, type FileItem } from '$lib/collection-store.svelte';
+	import { audioPlayer } from '$lib/audio-player.svelte';
 
 	interface SettingsState {
 		theme: string;
@@ -122,9 +123,16 @@
 			displayedFiles[index].selected = !displayedFiles[index].selected;
 			lastSelectedIndex = index;
 		} else {
-			files.forEach((f) => (f.selected = false));
-			displayedFiles[index].selected = true;
-			lastSelectedIndex = index;
+			if (displayedFiles[index].selected && !displayedFiles[index].missing) {
+				audioPlayer.toggle(displayedFiles[index]);
+			} else {
+				files.forEach((f) => (f.selected = false));
+				displayedFiles[index].selected = true;
+				lastSelectedIndex = index;
+				if (!displayedFiles[index].missing) {
+					audioPlayer.play(displayedFiles[index]);
+				}
+			}
 		}
 	}
 
@@ -381,7 +389,7 @@
 											<AlertTriangle size={14} />
 										</span>
 									{/if}
-									<span>{file.filename}</span>
+									<span class:playing={audioPlayer.currentFileId === file.id}>{file.filename}</span>
 								</div>
 							</td>
 						{:else if columnId === 'format'}
@@ -577,6 +585,11 @@
 		gap: 8px;
 	}
 
+    .playing {
+        color: var(--icon-active);
+        font-weight: 500;
+    }
+
 	.warning-icon {
 		color: #ffa600;
 		display: flex;
@@ -589,6 +602,18 @@
 		align-items: center;
 		min-width: 14px;
 		justify-content: center;
+	}
+
+	.playing-icon {
+		color: var(--icon-active);
+		display: flex;
+		align-items: center;
+		min-width: 14px;
+		justify-content: center;
+	}
+
+	.playing-icon.paused {
+		opacity: 0.6;
 	}
 
 	.processing-icon.queued {
