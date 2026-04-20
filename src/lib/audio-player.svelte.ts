@@ -1,15 +1,20 @@
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { collectionStore, type FileItem } from './collection-store.svelte';
+import { settingsStore } from './settings-store.svelte';
 
 class AudioPlayer {
 	audio: HTMLAudioElement | null = null;
 	currentFileId = $state<string | null>(null);
 	isPlaying = $state(false);
+	isWaitingToReplay = $state(false);
+	replayProgress = $state(0);
 	currentTime = $state(0);
 	duration = $state(0);
 	volume = $state(1);
 	progress = $derived(this.duration > 0 ? this.currentTime / this.duration : 0);
 	private animationFrame: number | null = null;
+	private replayAnimationFrame: number | null = null;
+	private replayTimeout: ReturnType<typeof setTimeout> | null = null;
 	
 	// Web Audio API
 	private audioCtx: AudioContext | null = null;
@@ -25,6 +30,7 @@ class AudioPlayer {
 			this.audio.addEventListener('play', () => {
 				this.isPlaying = true;
 				this.startUpdateLoop();
+				this.clearReplayTimeout();
 				// Resume AudioContext if it's suspended
 				if (this.audioCtx?.state === 'suspended') {
 					this.audioCtx.resume();
@@ -37,7 +43,36 @@ class AudioPlayer {
 			this.audio.addEventListener('ended', () => {
 				if (this.audio) {
 					this.audio.currentTime = 0;
-					this.audio.play();
+					
+					// On short audio files < 2 sec add a little delay before playing again
+					if (this.audio.duration < 2 && settingsStore.playbackDelay > 0) {
+						this.isWaitingToReplay = true;
+						this.replayProgress = 0;
+						const startTime = performance.now();
+						const duration = settingsStore.playbackDelay;
+
+						const updateReplayProgress = (now: number) => {
+							const elapsed = now - startTime;
+							this.replayProgress = Math.min(1, elapsed / duration);
+							
+							if (elapsed < duration) {
+								this.replayAnimationFrame = requestAnimationFrame(updateReplayProgress);
+							} else {
+								this.replayAnimationFrame = null;
+							}
+						};
+						this.replayAnimationFrame = requestAnimationFrame(updateReplayProgress);
+
+						this.replayTimeout = setTimeout(() => {
+							this.isWaitingToReplay = false;
+							this.replayProgress = 0;
+							if (this.audio && this.audio.paused && this.currentFileId) {
+								this.audio.play();
+							}
+						}, duration);
+					} else {
+						this.audio.play();
+					}
 				}
 			});
 			this.audio.addEventListener('timeupdate', () => {
@@ -49,6 +84,19 @@ class AudioPlayer {
 				}
 			});
 		}
+	}
+
+	private clearReplayTimeout() {
+		if (this.replayTimeout) {
+			clearTimeout(this.replayTimeout);
+			this.replayTimeout = null;
+		}
+		if (this.replayAnimationFrame) {
+			cancelAnimationFrame(this.replayAnimationFrame);
+			this.replayAnimationFrame = null;
+		}
+		this.isWaitingToReplay = false;
+		this.replayProgress = 0;
 	}
 
 	private initAudioContext() {
@@ -94,6 +142,8 @@ class AudioPlayer {
 	async play(file: FileItem) {
 		if (!this.audio || !collectionStore.collectionPath) return;
 
+		this.clearReplayTimeout();
+
 		if (!this.audioCtx) {
 			this.initAudioContext();
 		}
@@ -119,6 +169,7 @@ class AudioPlayer {
 	}
 
 	pause() {
+		this.clearReplayTimeout();
 		this.audio?.pause();
 	}
 

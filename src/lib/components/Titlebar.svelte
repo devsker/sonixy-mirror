@@ -18,6 +18,8 @@
     );
 
     let isPlaying = $derived(audioPlayer.isPlaying);
+    let isWaitingToReplay = $derived(audioPlayer.isWaitingToReplay);
+    let replayProgress = $derived(audioPlayer.replayProgress);
     let volume = $derived(audioPlayer.volume);
     let currentFileId = $derived(audioPlayer.currentFileId);
 
@@ -65,7 +67,27 @@
             <SkipBack size={14} fill="currentColor" />
         </button>
         <button class="playback-btn play-pause" onclick={() => audioPlayer.toggle()} aria-label={isPlaying ? 'Pause' : 'Play'}>
-            {#if isPlaying}
+            {#if isWaitingToReplay}
+                <svg width="18" height="18" viewBox="0 0 18 18">
+                    <circle 
+                        cx="9" cy="9" r="7" 
+                        fill="none" 
+                        stroke="currentColor" 
+                        stroke-width="2" 
+                        opacity="0.2"
+                    />
+                    <circle 
+                        cx="9" cy="9" r="7" 
+                        fill="none" 
+                        stroke="currentColor" 
+                        stroke-width="2" 
+                        stroke-dasharray="44" 
+                        stroke-dashoffset={44 - (44 * replayProgress)}
+                        stroke-linecap="round"
+                        transform="rotate(-90 9 9)"
+                    />
+                </svg>
+            {:else if isPlaying}
                 <Pause size={16} fill="currentColor" />
             {:else}
                 <Play size={16} fill="currentColor" />

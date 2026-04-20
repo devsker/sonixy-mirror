@@ -7,6 +7,7 @@
 	let theme = $derived(settings.theme);
 	let showCheckboxes = $derived(settings.showCheckboxes);
 	let normalizeOnImport = $derived(settings.normalizeOnImport);
+	let playbackDelay = $derived(settings.playbackDelay);
 	
 	function handleThemeChange(e) {
 		settings.theme = e.target.value;
@@ -18,6 +19,10 @@
 
 	function handleNormalizeToggle(e) {
 		settings.normalizeOnImport = e.target.checked;
+	}
+
+	function handlePlaybackDelayChange(e) {
+		settings.playbackDelay = parseInt(e.target.value, 10);
 	}
 </script>
 
@@ -62,6 +67,25 @@
 					Reset Column Order
 				</button>
 				<p class="description">Reset the file list columns to their default order.</p>
+			</div>
+		</section>
+
+		<section class="settings-section">
+			<h2>Playback</h2>
+
+			<div class="setting-item">
+				<label for="playbackDelay">Loop Delay (ms)</label>
+				<input 
+					type="range" 
+					id="playbackDelay" 
+					min="0" 
+					max="2000" 
+					step="100" 
+					value={playbackDelay} 
+					oninput={handlePlaybackDelayChange}
+				/>
+				<div class="range-value">{playbackDelay}ms</div>
+				<p class="description">The delay before replaying audio files shorter than 2 seconds. Longer files loop immediately.</p>
 			</div>
 		</section>
 
@@ -171,6 +195,49 @@
 		font-size: 0.85rem;
 		color: var(--text-muted, #888);
 		margin-top: 4px;
+	}
+
+	.range-value {
+		font-size: 0.9rem;
+		font-weight: 500;
+		color: var(--icon-active);
+	}
+
+	input[type="range"] {
+		width: 100%;
+		max-width: 300px;
+		height: 3px;
+		-webkit-appearance: none;
+		background: rgba(0, 0, 0, 0.1);
+		border-radius: 2px;
+		outline: none;
+		cursor: pointer;
+		margin: 12px 0;
+	}
+
+	:global(html.dark) input[type="range"] {
+		background: rgba(255, 255, 255, 0.1);
+	}
+
+	input[type="range"]::-webkit-slider-runnable-track {
+		height: 3px;
+	}
+
+	input[type="range"]::-webkit-slider-thumb {
+		-webkit-appearance: none;
+		width: 12px;
+		height: 12px;
+		margin-top: -4.5px;
+		background: var(--text-muted);
+		border-radius: 50%;
+		cursor: pointer;
+		transition: background 0.1s, transform 0.1s;
+		border: none;
+	}
+
+	input[type="range"]:hover::-webkit-slider-thumb {
+		background: var(--icon-active);
+		transform: scale(1.2);
 	}
 
 	.select-wrapper {

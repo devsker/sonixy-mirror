@@ -7,6 +7,8 @@
 	import DropPrompt from '$lib/components/DropPrompt.svelte';
 	import { collectionStore } from '$lib/collection-store.svelte';
 	
+	import { settingsStore } from '$lib/settings-store.svelte';
+	
 	let { children } = $props();
 
 	let dropPaths = $state<string[]>([]);
@@ -30,7 +32,7 @@
 			await collectionStore.confirmRelocate(action);
 		} else if (dropPaths.length > 0) {
 			showDropPrompt = false;
-			await collectionStore.addFiles(dropPaths, action, settingsState.normalizeOnImport);
+			await collectionStore.addFiles(dropPaths, action, settingsStore.normalizeOnImport);
 			dropPaths = [];
 		}
 	}
@@ -40,14 +42,6 @@
 		collectionStore.pendingRelocate = null;
 		dropPaths = [];
 	}
-
-	// Use a reactive object for the settings state to ensure context consumers stay in sync
-	const settingsState = $state({
-		theme: 'system',
-		showCheckboxes: false,
-		normalizeOnImport: true,
-		columnOrder: ['filename', 'format', 'length', 'size', 'tags']
-	});
 
 	function applyTheme(value: string) {
 		const root = document.documentElement;
@@ -62,20 +56,7 @@
 	}
 
 	onMount(() => {
-		const savedSettings = localStorage.getItem('settings');
-		if (savedSettings) {
-			try {
-				const parsed = JSON.parse(savedSettings);
-				settingsState.theme = parsed.theme || 'system';
-				settingsState.showCheckboxes = parsed.showCheckboxes ?? false;
-				settingsState.normalizeOnImport = parsed.normalizeOnImport ?? true;
-				settingsState.columnOrder = parsed.columnOrder || ['filename', 'format', 'length', 'size', 'tags'];
-			} catch (e) {
-				console.error('Failed to parse settings', e);
-			}
-		}
-		
-		applyTheme(settingsState.theme);
+		applyTheme(settingsStore.theme);
 		
 		// Remove no-transitions class after initial theme application
 		setTimeout(() => {
@@ -84,24 +65,18 @@
 
 		const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
 		const handler = () => {
-			if (settingsState.theme === 'system') applyTheme('system');
+			if (settingsStore.theme === 'system') applyTheme('system');
 		};
 		mediaQuery.addEventListener('change', handler);
 		return () => mediaQuery.removeEventListener('change', handler);
 	});
 
 	$effect(() => {
-		localStorage.setItem('settings', JSON.stringify({
-			theme: settingsState.theme,
-			showCheckboxes: settingsState.showCheckboxes,
-			normalizeOnImport: settingsState.normalizeOnImport,
-			columnOrder: settingsState.columnOrder
-		}));
-		applyTheme(settingsState.theme);
+		applyTheme(settingsStore.theme);
 	});
 
 	// Provide the reactive state object directly
-	setContext('settings-context', settingsState);
+	setContext('settings-context', settingsStore);
 </script>
 
 <div class="app-container">
