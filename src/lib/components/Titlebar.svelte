@@ -1,11 +1,20 @@
 <script>
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import { Minus, Square, X, RefreshCw } from 'lucide-svelte';
+	import { Minus, Square, X, RefreshCw, CheckCircle2, AlertCircle, Loader2 } from 'lucide-svelte';
 	import { collectionStore } from '$lib/collection-store.svelte';
 
 	const appWindow = getCurrentWindow();
     let loading = $derived(collectionStore.loading);
     let collectionPath = $derived(collectionStore.collectionPath);
+    let tasks = $derived(collectionStore.tasks);
+    let showTasks = $state(false);
+
+    let activeTasksCount = $derived(tasks.filter(t => t.status === 'running' || t.status === 'pending').length);
+    let overallProgress = $derived(
+        tasks.length > 0 
+            ? tasks.reduce((acc, t) => acc + t.progress, 0) / tasks.length 
+            : 0
+    );
 
 	async function minimize() {
 		await appWindow.minimize();
@@ -22,6 +31,10 @@
 	async function close() {
 		await appWindow.close();
 	}
+
+    function toggleTasks() {
+        showTasks = !showTasks;
+    }
 </script>
 
 <div data-tauri-drag-region class="titlebar">
@@ -30,6 +43,81 @@
 	</div>
 	<div class="controls">
         {#if collectionPath}
+            <div class="task-container">
+                <button 
+                    class="control-btn task-btn" 
+                    onclick={toggleTasks} 
+                    aria-label="Tasks"
+                    class:active={activeTasksCount > 0}
+                >
+                    <svg width="18" height="18" viewBox="0 0 18 18">
+                        <circle 
+                            cx="9" cy="9" r="7" 
+                            fill="none" 
+                            stroke="currentColor" 
+                            stroke-width="2" 
+                            opacity="0.2"
+                        />
+                        <circle 
+                            cx="9" cy="9" r="7" 
+                            fill="none" 
+                            stroke="var(--accent-color, #3b82f6)" 
+                            stroke-width="2" 
+                            stroke-dasharray="44" 
+                            stroke-dashoffset={44 - (44 * overallProgress / 100)}
+                            stroke-linecap="round"
+                            transform="rotate(-90 9) "
+                        />
+                    </svg>
+                    {#if activeTasksCount > 0}
+                        <span class="task-badge">{activeTasksCount}</span>
+                    {/if}
+                </button>
+
+                {#if showTasks}
+                    <div class="tasks-popover">
+                        <div class="popover-header">
+                            <span>Background Tasks</span>
+                            <button class="clear-btn" onclick={() => collectionStore.tasks = tasks.filter(t => t.status === 'running')}>Clear Finished</button>
+                        </div>
+                        <div class="tasks-list">
+                            {#if tasks.length === 0}
+                                <div class="no-tasks">No active tasks</div>
+                            {:else}
+                                {#each tasks as task (task.id)}
+                                    <div class="task-item">
+                                        <div class="task-info">
+                                            <span class="task-name">{task.name}</span>
+                                            <div class="task-status">
+                                                {#if task.status === 'running'}
+                                                    <Loader2 size={12} class="animate-spin" />
+                                                {:else if task.status === 'completed'}
+                                                    <CheckCircle2 size={12} color="var(--success-color, #22c55e)" />
+                                                {:else if task.status === 'failed'}
+                                                    <AlertCircle size={12} color="var(--error-color, #ef4444)" />
+                                                {/if}
+                                                <span>{Math.round(task.progress)}%</span>
+                                            </div>
+                                        </div>
+                                        <div class="task-progress-bar">
+                                            <div 
+                                                class="progress-fill" 
+                                                style="width: {task.progress}%"
+                                                class:completed={task.status === 'completed'}
+                                                class:failed={task.status === 'failed'}
+                                            ></div>
+                                        </div>
+                                        {#if task.message}
+                                            <span class="task-message">{task.message}</span>
+                                        {/if}
+                                    </div>
+                                {/each}
+                            {/if}
+                        </div>
+                    </div>
+                {/if}
+            </div>
+
             <button class="control-btn" onclick={() => collectionStore.refresh()} aria-label="Refresh" disabled={loading}>
                 <RefreshCw size={14} class={loading ? 'animate-spin' : ''} />
             </button>
@@ -92,6 +180,156 @@
 		height: 100%;
 		flex-shrink: 0;
 	}
+
+    .task-container {
+        position: relative;
+        display: flex;
+        height: 100%;
+    }
+
+    .task-btn {
+        position: relative;
+        color: var(--text-muted);
+    }
+
+    .task-btn.active {
+        color: var(--accent-color, #3b82f6);
+    }
+
+    .task-badge {
+        position: absolute;
+        top: 4px;
+        right: 4px;
+        background: var(--accent-color, #3b82f6);
+        color: white;
+        font-size: 8px;
+        font-weight: bold;
+        padding: 1px 3px;
+        border-radius: 6px;
+        min-width: 8px;
+        text-align: center;
+        line-height: 1;
+    }
+
+    .tasks-popover {
+        position: absolute;
+        top: 30px;
+        right: 0;
+        width: 250px;
+        background: var(--sidebar-bg);
+        border: 1px solid var(--border-color);
+        border-top: none;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        z-index: 1001;
+        display: flex;
+        flex-direction: column;
+        max-height: 400px;
+    }
+
+    .popover-header {
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-muted);
+        background: rgba(0, 0, 0, 0.02);
+    }
+
+    .clear-btn {
+        background: none;
+        border: none;
+        color: var(--accent-color, #3b82f6);
+        font-size: 10px;
+        cursor: pointer;
+        padding: 2px 4px;
+        border-radius: 4px;
+    }
+
+    .clear-btn:hover {
+        background: rgba(59, 130, 246, 0.1);
+    }
+
+    .tasks-list {
+        padding: 4px 0;
+        overflow-y: auto;
+    }
+
+    .no-tasks {
+        padding: 20px;
+        text-align: center;
+        font-size: 11px;
+        color: var(--text-muted);
+    }
+
+    .task-item {
+        padding: 8px 12px;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    :global(html.dark) .task-item {
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .task-info {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .task-name {
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--text-main);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .task-status {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 10px;
+        color: var(--text-muted);
+    }
+
+    .task-progress-bar {
+        height: 3px;
+        background: rgba(0, 0, 0, 0.05);
+        border-radius: 2px;
+        overflow: hidden;
+    }
+
+    :global(html.dark) .task-progress-bar {
+        background: rgba(255, 255, 255, 0.1);
+    }
+
+    .progress-fill {
+        height: 100%;
+        background: var(--accent-color, #3b82f6);
+        transition: width 0.3s ease;
+    }
+
+    .progress-fill.completed {
+        background: var(--success-color, #22c55e);
+    }
+
+    .progress-fill.failed {
+        background: var(--error-color, #ef4444);
+    }
+
+    .task-message {
+        font-size: 9px;
+        color: var(--text-muted);
+        font-style: italic;
+    }
 
 	.control-btn {
 		display: inline-flex;

@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
+import { listen } from '@tauri-apps/api/event';
 
 export interface FileItem {
     id: string;
@@ -13,11 +14,22 @@ export interface FileItem {
     missing: boolean;
 }
 
+export interface Task {
+    id: string;
+    name: string;
+    progress: number; // 0 to 100
+    status: 'pending' | 'running' | 'completed' | 'failed';
+    message?: string;
+    total?: number;
+    completed?: number;
+}
+
 class CollectionStore {
     files = $state<FileItem[]>([]);
     collectionPath = $state<string | null>(null);
     loading = $state(false);
     pendingRelocate = $state<{id: string, path: string} | null>(null);
+    tasks = $state<Task[]>([]);
 
     constructor() {
         // Automatically open last collection if it exists
@@ -26,16 +38,64 @@ class CollectionStore {
             if (lastPath) {
                 this.openCollectionByPath(lastPath);
             }
+
+            // Listen for waveform generation
+            listen('waveform-generated', (event) => {
+                const id = event.payload as string;
+                const task = this.tasks.find(t => t.id === 'waveforms');
+                if (task && task.total !== undefined && task.completed !== undefined) {
+                    task.completed++;
+                    task.progress = (task.completed / task.total) * 100;
+                    task.message = `${task.completed} / ${task.total} waveforms`;
+                    if (task.completed >= task.total) {
+                        task.status = 'completed';
+                        setTimeout(() => this.removeTask(task.id), 5000);
+                    }
+                }
+            });
         }
+    }
+
+    addTask(task: Task) {
+        if (task.total !== undefined && task.completed === undefined) {
+            task.completed = 0;
+        }
+        this.tasks.push(task);
+    }
+
+    updateTask(id: string, updates: Partial<Task>) {
+        const task = this.tasks.find(t => t.id === id);
+        if (task) {
+            Object.assign(task, updates);
+            if (task.total !== undefined && task.completed !== undefined) {
+                task.progress = (task.completed / task.total) * 100;
+            }
+        }
+    }
+
+    removeTask(id: string) {
+        this.tasks = this.tasks.filter(t => t.id !== id);
     }
 
     async openCollectionByPath(path: string) {
         try {
             this.loading = true;
             this.collectionPath = path;
-            const result = await invoke<Omit<FileItem, 'selected'>[]>('open_collection', { path });
-            this.files = result.map(f => ({ ...f, selected: false }));
+            const [files, missingWaveforms] = await invoke<[Omit<FileItem, 'selected'>[], number]>('open_collection', { path });
+            this.files = files.map(f => ({ ...f, selected: false }));
             localStorage.setItem('lastCollectionPath', path);
+            
+            if (missingWaveforms > 0) {
+                this.addTask({
+                    id: 'waveforms',
+                    name: 'Generating Waveforms',
+                    progress: 0,
+                    status: 'running',
+                    total: missingWaveforms,
+                    completed: 0,
+                    message: `0 / ${missingWaveforms} waveforms`
+                });
+            }
         } catch (e) {
             console.error('Failed to auto-open collection', e);
             this.collectionPath = null;
@@ -76,12 +136,44 @@ class CollectionStore {
 
     async addFiles(filePaths: string[], action: 'copy' | 'move') {
         if (!this.collectionPath) return;
+        const taskId = Math.random().toString(36).substring(7);
+        this.addTask({
+            id: taskId,
+            name: `${action === 'copy' ? 'Copying' : 'Moving'} ${filePaths.length} files`,
+            progress: 0,
+            status: 'running'
+        });
+
         try {
             this.loading = true;
-            const result = await invoke<Omit<FileItem, 'selected'>[]>('add_files_to_collection', { files: filePaths, action });
-            this.files = result.map(f => ({ ...f, selected: false }));
+            const [files, missingWaveforms] = await invoke<[Omit<FileItem, 'selected'>[], number]>('add_files_to_collection', { files: filePaths, action });
+            this.files = files.map(f => ({ ...f, selected: false }));
+            this.updateTask(taskId, { progress: 100, status: 'completed' });
+            setTimeout(() => this.removeTask(taskId), 2000);
+
+            if (missingWaveforms > 0) {
+                let task = this.tasks.find(t => t.id === 'waveforms');
+                if (task) {
+                    task.total = (task.total || 0) + missingWaveforms;
+                    task.completed = (task.completed || 0);
+                    task.status = 'running';
+                    task.message = `${task.completed} / ${task.total} waveforms`;
+                    task.progress = (task.completed / task.total) * 100;
+                } else {
+                    this.addTask({
+                        id: 'waveforms',
+                        name: 'Generating Waveforms',
+                        progress: 0,
+                        status: 'running',
+                        total: missingWaveforms,
+                        completed: 0,
+                        message: `0 / ${missingWaveforms} waveforms`
+                    });
+                }
+            }
         } catch (e) {
             console.error('Failed to add files', e);
+            this.updateTask(taskId, { status: 'failed', message: (e as Error).message });
         } finally {
             this.loading = false;
         }
@@ -101,6 +193,14 @@ class CollectionStore {
             if (selected && typeof selected === 'string') {
                 if (this.collectionPath && selected.startsWith(this.collectionPath)) {
                     // Already in collection folder, just link it
+                    const taskId = Math.random().toString(36).substring(7);
+                    this.addTask({
+                        id: taskId,
+                        name: `Linking file`,
+                        progress: 0,
+                        status: 'running'
+                    });
+
                     this.loading = true;
                     const result = await invoke<Omit<FileItem, 'selected'>[]>('relocate_file', { 
                         id, 
@@ -108,6 +208,8 @@ class CollectionStore {
                         action: 'link'
                     });
                     this.files = result.map(f => ({ ...f, selected: false }));
+                    this.updateTask(taskId, { progress: 100, status: 'completed' });
+                    setTimeout(() => this.removeTask(taskId), 2000);
                 } else {
                     // Outside collection, ask user to copy or move
                     this.pendingRelocate = { id, path: selected };
@@ -122,27 +224,51 @@ class CollectionStore {
 
     async confirmRelocate(action: 'copy' | 'move') {
         if (!this.pendingRelocate) return;
+        const taskId = Math.random().toString(36).substring(7);
+        this.addTask({
+            id: taskId,
+            name: `${action === 'copy' ? 'Copying' : 'Moving'} relocated file`,
+            progress: 0,
+            status: 'running'
+        });
+
         try {
             this.loading = true;
             const { id, path } = this.pendingRelocate;
             const result = await invoke<Omit<FileItem, 'selected'>[]>('relocate_file', { id, newPath: path, action });
             this.files = result.map(f => ({ ...f, selected: false }));
             this.pendingRelocate = null;
+            this.updateTask(taskId, { progress: 100, status: 'completed' });
+            setTimeout(() => this.removeTask(taskId), 2000);
         } catch (e) {
             console.error('Failed to complete relocation', e);
+            this.updateTask(taskId, { status: 'failed', message: (e as Error).message });
         } finally {
             this.loading = false;
         }
     }
 
     async removeFile(id: string) {
-        if (!confirm('Are you sure you want to remove this file from the collection?')) return;
+        const file = this.files.find(f => f.id === id);
+        if (!confirm(`Are you sure you want to remove "${file?.filename}" from the collection?`)) return;
+        
+        const taskId = Math.random().toString(36).substring(7);
+        this.addTask({
+            id: taskId,
+            name: `Removing ${file?.filename}`,
+            progress: 0,
+            status: 'running'
+        });
+
         try {
             this.loading = true;
             const result = await invoke<Omit<FileItem, 'selected'>[]>('remove_file_from_collection', { id });
             this.files = result.map(f => ({ ...f, selected: false }));
+            this.updateTask(taskId, { progress: 100, status: 'completed' });
+            setTimeout(() => this.removeTask(taskId), 2000);
         } catch (e) {
             console.error('Failed to remove file', e);
+            this.updateTask(taskId, { status: 'failed', message: (e as Error).message });
         } finally {
             this.loading = false;
         }

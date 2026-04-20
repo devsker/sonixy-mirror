@@ -21,7 +21,7 @@ struct AppState {
     waveform_queue: Arc<WaveformQueue>,
 }
 
-fn queue_missing_waveforms(folder_path: &PathBuf, queue: &Arc<WaveformQueue>) -> Result<(), String> {
+fn queue_missing_waveforms(folder_path: &PathBuf, queue: &Arc<WaveformQueue>) -> Result<usize, String> {
     let conn = collection::init_db(folder_path).map_err(|e| e.to_string())?;
     
     // Find files that don't have a waveform yet
@@ -36,21 +36,23 @@ fn queue_missing_waveforms(folder_path: &PathBuf, queue: &Arc<WaveformQueue>) ->
         })
     }).map_err(|e| e.to_string())?;
 
+    let mut added_count = 0;
     let mut tasks = queue.tasks.lock().unwrap();
     for task in missing_iter {
         if let Ok(t) = task {
             // Avoid duplicates in queue
             if !tasks.iter().any(|existing| existing.id == t.id) {
                 tasks.push_back(t);
+                added_count += 1;
             }
         }
     }
     queue.cvar.notify_all();
-    Ok(())
+    Ok(added_count)
 }
 
 #[tauri::command]
-fn open_collection(path: String, state: State<'_, AppState>) -> Result<Vec<FileItem>, String> {
+fn open_collection(path: String, state: State<'_, AppState>) -> Result<(Vec<FileItem>, usize), String> {
     let folder_path = PathBuf::from(&path);
     if !folder_path.exists() || !folder_path.is_dir() {
         return Err("Invalid folder path".to_string());
@@ -66,9 +68,9 @@ fn open_collection(path: String, state: State<'_, AppState>) -> Result<Vec<FileI
     }
 
     // Queue missing waveforms in background
-    let _ = queue_missing_waveforms(&folder_path, &state.waveform_queue);
+    let missing_count = queue_missing_waveforms(&folder_path, &state.waveform_queue).unwrap_or(0);
 
-    Ok(files)
+    Ok((files, missing_count))
 }
 
 #[tauri::command]
@@ -156,7 +158,7 @@ fn add_files_to_collection(
     files: Vec<String>, 
     action: String, 
     state: State<'_, AppState>
-) -> Result<Vec<FileItem>, String> {
+) -> Result<(Vec<FileItem>, usize), String> {
     let state_path = state.collection_path.lock().unwrap();
     let folder_path = state_path.as_ref().ok_or("No collection open")?;
     
@@ -196,10 +198,10 @@ fn add_files_to_collection(
     }
     
     // Queue missing waveforms
-    let _ = queue_missing_waveforms(folder_path, &state.waveform_queue);
+    let missing_count = queue_missing_waveforms(folder_path, &state.waveform_queue).unwrap_or(0);
     
     let files = collection::get_all_files(folder_path, &conn).map_err(|e| e.to_string())?;
-    Ok(files)
+    Ok((files, missing_count))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
