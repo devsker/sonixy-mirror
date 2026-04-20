@@ -82,6 +82,9 @@
 <style>
 	.settings-page {
 		padding: 24px;
+		height: 100%;
+		overflow-y: auto;
+		box-sizing: border-box;
 	}
 
 	.settings-container {

@@ -153,6 +153,9 @@
 		--icon-color: #616161;
 		--icon-active: #007acc;
 		--icon-hover: #333333;
+		--scrollbar-track: transparent;
+		--scrollbar-thumb: #cccccc;
+		--scrollbar-thumb-hover: #b0b0b0;
 	}
 
 	:global(html.dark) {
@@ -164,6 +167,8 @@
 		--icon-color: #858585;
 		--icon-active: #ffffff;
 		--icon-hover: #ffffff;
+		--scrollbar-thumb: #444444;
+		--scrollbar-thumb-hover: #555555;
 	}
 
 	:global(body) {
@@ -184,6 +189,27 @@
 		background-color: var(--bg-color);
 		color: var(--text-color);
 		overflow: hidden;
+	}
+
+	/* Custom Scrollbar Styles */
+	:global(::-webkit-scrollbar) {
+		width: 10px;
+		height: 10px;
+	}
+
+	:global(::-webkit-scrollbar-track) {
+		background: var(--scrollbar-track);
+	}
+
+	:global(::-webkit-scrollbar-thumb) {
+		background: var(--scrollbar-thumb);
+		border-radius: 10px;
+		border: 2px solid var(--bg-color);
+		background-clip: padding-box;
+	}
+
+	:global(::-webkit-scrollbar-thumb:hover) {
+		background-color: var(--scrollbar-thumb-hover);
 	}
 
 	:global(a), :global(img) {
