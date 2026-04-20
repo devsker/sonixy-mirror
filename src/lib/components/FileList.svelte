@@ -1,69 +1,16 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
-	import { ChevronUp, ChevronDown, Filter } from 'lucide-svelte';
+	import { ChevronUp, ChevronDown, Filter, FolderOpen, Loader2, AlertTriangle, Trash2, Search } from 'lucide-svelte';
+	import { collectionStore } from '$lib/collection-store.svelte';
 
 	const settings = getContext<any>('settings-context');
 	let showCheckboxes = $derived(settings?.showCheckboxes ?? false);
 
-	interface FileItem {
-		id: string;
-		filename: string;
-		format: string;
-		length: string;
-		size: string;
-		tags: string[];
-		selected: boolean;
-	}
-
 	let { onSelectionChange }: { onSelectionChange?: (ids: string[]) => void } = $props();
 
-	let files = $state<FileItem[]>([
-		{
-			id: '1',
-			filename: 'Explosion_Large_Distal.wav',
-			format: 'WAV',
-			length: '0:04',
-			size: '1.2 MB',
-			tags: ['Impact', 'Cinematic'],
-			selected: false
-		},
-		{
-			id: '2',
-			filename: 'UI_Click_Modern_03.mp3',
-			format: 'MP3',
-			length: '0:01',
-			size: '45 KB',
-			tags: ['UI', 'Interface'],
-			selected: false
-		},
-		{
-			id: '3',
-			filename: 'Footsteps_Concrete_Run_Loop.wav',
-			format: 'WAV',
-			length: '0:12',
-			size: '4.8 MB',
-			tags: ['Foley', 'Movement'],
-			selected: false
-		},
-		{
-			id: '4',
-			filename: 'Laser_Gun_Shot_01.wav',
-			format: 'WAV',
-			length: '0:02',
-			size: '850 KB',
-			tags: ['Sci-Fi', 'Weapon'],
-			selected: false
-		},
-		{
-			id: '5',
-			filename: 'Ambient_Wind_Howling_Loop.flac',
-			format: 'FLAC',
-			length: '2:30',
-			size: '32.4 MB',
-			tags: ['Ambient', 'Nature'],
-			selected: false
-		}
-	]);
+	let files = $derived(collectionStore.files);
+	let loading = $derived(collectionStore.loading);
+	let collectionPath = $derived(collectionStore.collectionPath);
 
 	let selectedIds = $derived(files.filter((f) => f.selected).map((f) => f.id));
 
@@ -210,7 +157,28 @@
 <svelte:window onclick={closePopovers} />
 
 <div class="file-list-container">
-	<table class="file-table" class:no-checkboxes={!showCheckboxes}>
+	{#if !collectionPath}
+		<div class="empty-state">
+			<FolderOpen size={48} />
+			<h2>No collection open</h2>
+			<p>Select a folder to start managing your audio files</p>
+			<button class="open-btn" onclick={() => collectionStore.openCollection()}>
+				Open Collection
+			</button>
+		</div>
+	{:else if loading && files.length === 0}
+		<div class="empty-state">
+			<Loader2 size={48} class="animate-spin" />
+			<p>Scanning files...</p>
+		</div>
+	{:else if files.length === 0}
+		<div class="empty-state">
+			<Filter size={48} />
+			<h2>No audio files found</h2>
+			<p>Try adding some audio files to the folder or drag them here</p>
+		</div>
+	{:else}
+		<table class="file-table" class:no-checkboxes={!showCheckboxes}>
 		<thead>
 			<tr>
 				{#if showCheckboxes}
@@ -226,7 +194,13 @@
 						</label>
 					</th>
 				{/if}
-				<th class="filename-col sortable" onclick={() => toggleSort('filename')}>
+				<th 
+					class="filename-col sortable" 
+					onclick={() => toggleSort('filename')}
+					onkeydown={(e) => e.key === 'Enter' && toggleSort('filename')}
+					role="button"
+					tabindex="0"
+				>
 					<div class="header-content">
 						<span>Filename</span>
 						{#if sortColumn === 'filename'}
@@ -236,14 +210,25 @@
 						{/if}
 					</div>
 				</th>
-				<th class="format-col filterable" onclick={(e) => toggleFilterPopover('format', e)}>
+				<th 
+					class="format-col filterable" 
+					onclick={(e) => toggleFilterPopover('format', e)}
+					onkeydown={(e) => e.key === 'Enter' && toggleFilterPopover('format', e as any)}
+					role="button"
+					tabindex="0"
+				>
 					<div class="header-content">
 						<span>Format</span>
 						{#if selectedFormats.length > 0}
 							<span class="status-icon active"><Filter size={12} /></span>
 						{/if}
 						{#if activePopover === 'format'}
-							<div class="popover" onclick={(e) => e.stopPropagation()}>
+							<div 
+								class="popover" 
+								onclick={(e) => e.stopPropagation()}
+								onkeydown={(e) => e.stopPropagation()}
+								role="presentation"
+							>
 								<div class="popover-header">Filter Formats</div>
 								<div class="popover-list">
 									{#each allFormats as format}
@@ -263,7 +248,13 @@
 						{/if}
 					</div>
 				</th>
-				<th class="length-col sortable" onclick={() => toggleSort('length')}>
+				<th 
+					class="length-col sortable" 
+					onclick={() => toggleSort('length')}
+					onkeydown={(e) => e.key === 'Enter' && toggleSort('length')}
+					role="button"
+					tabindex="0"
+				>
 					<div class="header-content">
 						<span>Length</span>
 						{#if sortColumn === 'length'}
@@ -273,7 +264,13 @@
 						{/if}
 					</div>
 				</th>
-				<th class="size-col sortable" onclick={() => toggleSort('size')}>
+				<th 
+					class="size-col sortable" 
+					onclick={() => toggleSort('size')}
+					onkeydown={(e) => e.key === 'Enter' && toggleSort('size')}
+					role="button"
+					tabindex="0"
+				>
 					<div class="header-content">
 						<span>Size</span>
 						{#if sortColumn === 'size'}
@@ -283,14 +280,25 @@
 						{/if}
 					</div>
 				</th>
-				<th class="tags-col filterable" onclick={(e) => toggleFilterPopover('tags', e)}>
+				<th 
+					class="tags-col filterable" 
+					onclick={(e) => toggleFilterPopover('tags', e)}
+					onkeydown={(e) => e.key === 'Enter' && toggleFilterPopover('tags', e as any)}
+					role="button"
+					tabindex="0"
+				>
 					<div class="header-content">
 						<span>Tags</span>
 						{#if selectedTags.length > 0}
 							<span class="status-icon active"><Filter size={12} /></span>
 						{/if}
 						{#if activePopover === 'tags'}
-							<div class="popover" onclick={(e) => e.stopPropagation()}>
+							<div 
+								class="popover" 
+								onclick={(e) => e.stopPropagation()}
+								onkeydown={(e) => e.stopPropagation()}
+								role="presentation"
+							>
 								<div class="popover-header">Filter Tags</div>
 								<div class="popover-list">
 									{#each allTags as tag}
@@ -316,13 +324,14 @@
 			{#each displayedFiles as file, i (file.id)}
 				<tr 
 					class:selected={file.selected} 
+					class:missing={file.missing}
 					onclick={(e) => handleSelection(e, i)}
 					onkeydown={(e) => e.key === 'Enter' && handleSelection(e as any, i)}
 					tabindex="0"
 				>
 					{#if showCheckboxes}
 						<td class="checkbox-col">
-							<label class="custom-checkbox" onclick={(e) => e.stopPropagation()}>
+							<label class="custom-checkbox">
 								<input 
 									type="checkbox" 
 									checked={file.selected} 
@@ -332,21 +341,54 @@
 							</label>
 						</td>
 					{/if}
-					<td class="filename-col" title={file.filename}>{file.filename}</td>
-					<td class="format-col">{file.format}</td>
-					<td class="length-col">{file.length}</td>
-					<td class="size-col">{file.size}</td>
-					<td class="tags-col">
-						<div class="tags-wrapper">
-							{#each file.tags as tag}
-								<span class="tag">{tag}</span>
-							{/each}
+					<td class="filename-col" title={file.filename}>
+						<div class="name-wrapper">
+							{#if file.missing}
+								<span class="warning-icon" title="File not found">
+									<AlertTriangle size={14} />
+								</span>
+							{/if}
+							<span>{file.filename}</span>
 						</div>
+					</td>
+					<td class="format-col">
+						{#if file.missing}
+							<div class="missing-actions">
+								<button 
+									class="action-icon" 
+									onclick={(e) => { e.stopPropagation(); collectionStore.relocateFile(file.id); }}
+									title="Locate file"
+								>
+									<Search size={14} />
+								</button>
+								<button 
+									class="action-icon danger" 
+									onclick={(e) => { e.stopPropagation(); collectionStore.removeFile(file.id); }}
+									title="Remove from collection"
+								>
+									<Trash2 size={14} />
+								</button>
+							</div>
+						{:else}
+							{file.format}
+						{/if}
+					</td>
+					<td class="length-col">{file.missing ? '-' : file.length}</td>
+					<td class="size-col">{file.missing ? '-' : file.size}</td>
+					<td class="tags-col">
+						{#if !file.missing}
+							<div class="tags-wrapper">
+								{#each file.tags as tag}
+									<span class="tag">{tag}</span>
+								{/each}
+							</div>
+						{/if}
 					</td>
 				</tr>
 			{/each}
 		</tbody>
 	</table>
+	{/if}
 </div>
 
 <style>
@@ -465,8 +507,66 @@
 		background-color: rgba(0, 122, 204, 0.2);
 	}
 
+	tr.missing {
+		background-color: rgba(255, 166, 0, 0.05);
+	}
+
+	:global(html.dark) tr.missing {
+		background-color: rgba(255, 166, 0, 0.1);
+	}
+
+	tr.missing td {
+		color: var(--text-muted);
+	}
+
 	tr:focus-visible {
 		box-shadow: inset 0 0 0 1px var(--icon-active);
+	}
+
+	.name-wrapper {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.warning-icon {
+		color: #ffa600;
+		display: flex;
+		align-items: center;
+	}
+
+	.missing-actions {
+		display: flex;
+		gap: 8px;
+		align-items: center;
+	}
+
+	.action-icon {
+		background: none;
+		border: none;
+		padding: 4px;
+		border-radius: 4px;
+		color: var(--icon-color);
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: background-color 0.1s, color 0.1s;
+	}
+
+	.action-icon:hover {
+		background-color: rgba(0, 0, 0, 0.05);
+		color: var(--icon-active);
+	}
+
+	:global(html.dark) .action-icon:hover {
+		background-color: rgba(255, 255, 255, 0.05);
+		color: white;
+	}
+
+	.action-icon.danger:hover {
+		background-color: #e81123;
+		color: white;
 	}
 
 	.checkbox-col {
@@ -515,11 +615,6 @@
 		display: flex;
 		flex-direction: column;
 		cursor: default;
-	}
-
-	.popover.popover-right {
-		left: auto;
-		right: 8px;
 	}
 
 	.popover-header {
@@ -638,5 +733,56 @@
 
 	:global(html.dark) .custom-checkbox input:checked ~ .checkmark:after {
 		border-color: #1e1e1e;
+	}
+
+	.empty-state {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		padding: 40px;
+		color: var(--text-muted);
+		text-align: center;
+		overflow: hidden;
+	}
+
+	.empty-state h2 {
+		margin: 16px 0 8px;
+		font-size: 18px;
+		color: var(--text-color);
+	}
+
+	.empty-state p {
+		margin-bottom: 24px;
+		font-size: 14px;
+	}
+
+	.open-btn {
+		background-color: #007acc;
+		color: #ffffff;
+		border: none;
+		padding: 10px 20px;
+		border-radius: 6px;
+		font-weight: 600;
+		cursor: pointer;
+		transition: opacity 0.1s;
+	}
+
+	.open-btn:hover {
+		opacity: 0.9;
+	}
+
+	:global(.animate-spin) {
+		animation: spin 1s linear infinite;
+	}
+
+	@keyframes spin {
+		from { transform: rotate(0deg); }
+		to { transform: rotate(360deg); }
 	}
 </style>

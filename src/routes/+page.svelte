@@ -1,6 +1,7 @@
-<script>
+<script lang="ts">
 	import FileList from '$lib/components/FileList.svelte';
 	import Waveform from '$lib/components/Waveform.svelte';
+	import { collectionStore } from '$lib/collection-store.svelte';
 
 	let selectedIds = $state([]);
 
@@ -10,15 +11,17 @@
 </script>
 
 <div class="page-container">
-	<div class="waveform-section">
-		{#if selectedIds.length === 0}
-			<div class="selection-message">No file selected</div>
-		{:else if selectedIds.length === 1}
-			<Waveform seed={selectedIds[0]} />
-		{:else}
-			<div class="selection-message">More than one file selected</div>
-		{/if}
-	</div>
+	{#if collectionStore.collectionPath}
+		<div class="waveform-section">
+			{#if selectedIds.length === 0}
+				<div class="selection-message">No file selected</div>
+			{:else if selectedIds.length === 1}
+				<Waveform seed={selectedIds[0]} />
+			{:else}
+				<div class="selection-message">More than one file selected</div>
+			{/if}
+		</div>
+	{/if}
 	<FileList onSelectionChange={handleSelectionChange} />
 </div>
 

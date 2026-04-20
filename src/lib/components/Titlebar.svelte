@@ -1,8 +1,11 @@
 <script>
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import { Minus, Square, X } from 'lucide-svelte';
+	import { Minus, Square, X, RefreshCw } from 'lucide-svelte';
+	import { collectionStore } from '$lib/collection-store.svelte';
 
 	const appWindow = getCurrentWindow();
+    let loading = $derived(collectionStore.loading);
+    let collectionPath = $derived(collectionStore.collectionPath);
 
 	async function minimize() {
 		await appWindow.minimize();
@@ -26,6 +29,11 @@
 		<span class="title">Sonixy</span>
 	</div>
 	<div class="controls">
+        {#if collectionPath}
+            <button class="control-btn" onclick={() => collectionStore.refresh()} aria-label="Refresh" disabled={loading}>
+                <RefreshCw size={14} class={loading ? 'animate-spin' : ''} />
+            </button>
+        {/if}
 		<button class="control-btn" onclick={minimize} aria-label="Minimize">
 			<Minus size={14} />
 		</button>
@@ -104,6 +112,11 @@
 		color: var(--icon-hover);
 	}
 
+    .control-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
 	:global(html.dark) .control-btn:hover {
 		background: rgba(255, 255, 255, 0.05);
 	}
@@ -112,4 +125,13 @@
 		background-color: #e81123 !important;
 		color: white !important;
 	}
+
+    :global(.animate-spin) {
+        animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
 </style>

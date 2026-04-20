@@ -1,10 +1,45 @@
-<script>
+<script lang="ts">
 	import { Library, Settings } from 'lucide-svelte';
 	import { page } from '$app/state';
 	import Titlebar from '$lib/components/Titlebar.svelte';
 	import { onMount, setContext } from 'svelte';
+	import { getCurrentWindow } from '@tauri-apps/api/window';
+	import DropPrompt from '$lib/components/DropPrompt.svelte';
+	import { collectionStore } from '$lib/collection-store.svelte';
 	
 	let { children } = $props();
+
+	let dropPaths = $state<string[]>([]);
+	let showDropPrompt = $state(false);
+
+	const appWindow = getCurrentWindow();
+	
+	onMount(async () => {
+		const unlisten = await appWindow.onDragDropEvent((event) => {
+			if (event.payload.type === 'drop' && collectionStore.collectionPath) {
+				dropPaths = event.payload.paths;
+				showDropPrompt = true;
+			}
+		});
+
+		return () => unlisten();
+	});
+
+	async function handleDropSelect(action: 'copy' | 'move') {
+		if (collectionStore.pendingRelocate) {
+			await collectionStore.confirmRelocate(action);
+		} else if (dropPaths.length > 0) {
+			showDropPrompt = false;
+			await collectionStore.addFiles(dropPaths, action);
+			dropPaths = [];
+		}
+	}
+
+	function handleDropCancel() {
+		showDropPrompt = false;
+		collectionStore.pendingRelocate = null;
+		dropPaths = [];
+	}
 
 	// Use a reactive object for the settings state to ensure context consumers stay in sync
 	const settingsState = $state({
@@ -96,6 +131,13 @@
 			{@render children()}
 		</main>
 	</div>
+
+	{#if showDropPrompt || collectionStore.pendingRelocate}
+		<DropPrompt 
+			onSelect={handleDropSelect} 
+			onCancel={handleDropCancel} 
+		/>
+	{/if}
 </div>
 
 <style>
