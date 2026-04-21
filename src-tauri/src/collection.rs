@@ -20,6 +20,7 @@ pub struct FileItem {
     pub filepath: String,
     pub format: String,
     pub length: String,
+    pub duration: f64,
     pub size: String,
     pub tags: Vec<String>,
     pub gain: f32,
@@ -44,6 +45,7 @@ pub fn init_db(folder_path: &Path) -> rusqlite::Result<Connection> {
             filepath TEXT NOT NULL UNIQUE,
             format TEXT NOT NULL,
             length TEXT NOT NULL,
+            duration REAL NOT NULL DEFAULT 0.0,
             size TEXT NOT NULL,
             tags TEXT NOT NULL,
             gain REAL DEFAULT 1.0
@@ -55,16 +57,40 @@ pub fn init_db(folder_path: &Path) -> rusqlite::Result<Connection> {
     {
         let mut stmt = conn.prepare("PRAGMA table_info(files)")?;
         let mut has_gain = false;
+        let mut has_duration = false;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
             let name: String = row.get(1)?;
             if name == "gain" {
                 has_gain = true;
-                break;
+            }
+            if name == "duration" {
+                has_duration = true;
             }
         }
         if !has_gain {
             let _ = conn.execute("ALTER TABLE files ADD COLUMN gain REAL DEFAULT 1.0", []);
+        }
+        if !has_duration {
+            let _ = conn.execute("ALTER TABLE files ADD COLUMN duration REAL DEFAULT 0.0", []);
+            
+            // Migrate existing files by extracting duration
+            let mut stmt = conn.prepare("SELECT id, filepath FROM files")?;
+            let file_iter = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+
+            for file in file_iter {
+                if let Ok((id, relative_path)) = file {
+                    let full_path = folder_path.join(&relative_path);
+                    if let Some(meta) = extract_metadata(&full_path) {
+                        let _ = conn.execute(
+                            "UPDATE files SET duration = ?1 WHERE id = ?2",
+                            params![meta.duration, id],
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -111,6 +137,7 @@ pub fn extract_metadata(path: &Path) -> Option<FileItem> {
         filepath: path.to_string_lossy().to_string(),
         format,
         length,
+        duration: properties.duration().as_secs_f64(),
         size,
         tags,
         gain: 1.0,
@@ -145,13 +172,14 @@ pub fn scan_folder(folder_path: &Path, conn: &Connection) -> rusqlite::Result<()
             if let Some(mut item) = extract_metadata(path) {
                 item.filepath = filepath_str;
                 conn.execute(
-                    "INSERT INTO files (id, filename, filepath, format, length, size, tags, gain) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    "INSERT INTO files (id, filename, filepath, format, length, duration, size, tags, gain) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                     params![
                         item.id,
                         item.filename,
                         item.filepath,
                         item.format,
                         item.length,
+                        item.duration,
                         item.size,
                         serde_json::to_string(&item.tags).unwrap_or_else(|_| "[]".to_string()),
                         item.gain
@@ -165,9 +193,9 @@ pub fn scan_folder(folder_path: &Path, conn: &Connection) -> rusqlite::Result<()
 }
 
 pub fn get_all_files(folder_path: &Path, conn: &Connection) -> rusqlite::Result<Vec<FileItem>> {
-    let mut stmt = conn.prepare("SELECT id, filename, filepath, format, length, size, tags, gain FROM files")?;
+    let mut stmt = conn.prepare("SELECT id, filename, filepath, format, length, duration, size, tags, gain FROM files")?;
     let file_iter = stmt.query_map([], |row| {
-        let tags_json: String = row.get(6)?;
+        let tags_json: String = row.get(7)?;
         let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
         let relative_path: String = row.get(2)?;
         let full_path = folder_path.join(&relative_path);
@@ -179,9 +207,10 @@ pub fn get_all_files(folder_path: &Path, conn: &Connection) -> rusqlite::Result<
             filepath: relative_path,
             format: row.get(3)?,
             length: row.get(4)?,
-            size: row.get(5)?,
+            duration: row.get(5)?,
+            size: row.get(6)?,
             tags,
-            gain: row.get(7)?,
+            gain: row.get(8)?,
             missing,
         })
     })?;

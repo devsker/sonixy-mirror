@@ -29,4 +29,5 @@ lofty = "0.21"
 walkdir = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 symphonia = { version = "0.5.5", features = ["all"] }
+rodio = "0.19"
 

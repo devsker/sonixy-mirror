@@ -10,6 +10,7 @@ export interface FileItem {
     filepath: string;
     format: string;
     length: string;
+    duration: number;
     size: string;
     tags: string[];
     gain: number;
@@ -35,6 +36,75 @@ class CollectionStore {
     tasks = $state<Task[]>([]);
     processingFiles = $state<Set<string>>(new Set());
     currentlyProcessingIds = $state<Set<string>>(new Set());
+
+    // Filter & Sort State
+    sortColumn = $state<string | null>(null);
+    sortDirection = $state<'asc' | 'desc'>('asc');
+    selectedFormats = $state<string[]>([]);
+    selectedTags = $state<string[]>([]);
+
+    displayedFiles = $derived.by(() => {
+        let result = [...this.files];
+
+        // Apply Filters
+        if (this.selectedFormats.length > 0) {
+            result = result.filter((f) => this.selectedFormats.includes(f.format));
+        }
+        if (this.selectedTags.length > 0) {
+            result = result.filter((f) => f.tags.some((t) => this.selectedTags.includes(t)));
+        }
+
+        // Apply Sorting
+        const col = this.sortColumn;
+        const dir = this.sortDirection;
+
+        if (col) {
+            result.sort((a, b) => {
+                let compareA: string | number;
+                let compareB: string | number;
+
+                if (col === 'length') {
+                    compareA = a.duration;
+                    compareB = b.duration;
+                } else if (col === 'size') {
+                    compareA = this.parseSize(a.size);
+                    compareB = this.parseSize(b.size);
+                } else {
+                    const valA = a[col as keyof FileItem];
+                    const valB = b[col as keyof FileItem];
+                    if (typeof valA === 'string' && typeof valB === 'string') {
+                        compareA = valA.toLowerCase();
+                        compareB = valB.toLowerCase();
+                    } else {
+                        compareA = String(valA);
+                        compareB = String(valB);
+                    }
+                }
+
+                if (compareA < compareB) return dir === 'asc' ? -1 : 1;
+                if (compareA > compareB) return dir === 'asc' ? 1 : -1;
+                return 0;
+            });
+        }
+
+        return result;
+    });
+
+    private parseDuration(d: string) {
+        const parts = d.split(':').map(Number);
+        if (parts.length === 2) return parts[0] * 60 + parts[1];
+        if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+        return parts[0];
+    }
+
+    private parseSize(s: string) {
+        const [val, unit] = s.split(' ');
+        const num = parseFloat(val);
+        if (unit === 'KB') return num * 1024;
+        if (unit === 'MB') return num * 1024 * 1024;
+        if (unit === 'GB') return num * 1024 * 1024 * 1024;
+        return num;
+    }
 
     constructor() {
         // Automatically open last collection if it exists

@@ -30,81 +30,22 @@
 		onSelectionChange?.(selectedIds);
 	});
 
-	// Filter & Sort State
-	let sortColumn = $state<string | null>(null);
-	let sortDirection = $state<'asc' | 'desc'>('asc');
-	let selectedFormats = $state<string[]>([]);
-	let selectedTags = $state<string[]>([]);
+	// Filter & Sort State from CollectionStore
+	let sortColumn = $derived(collectionStore.sortColumn);
+	let sortDirection = $derived(collectionStore.sortDirection);
+	let selectedFormats = $derived(collectionStore.selectedFormats);
+	let selectedTags = $derived(collectionStore.selectedTags);
 	let activePopover = $state<'format' | 'tags' | null>(null);
 
 	// Derived lists for filters
 	const allFormats = $derived([...new Set(files.map((f) => f.format))].sort());
 	const allTags = $derived([...new Set(files.flatMap((f) => f.tags))].sort());
 
-	function parseDuration(d: string) {
-		const parts = d.split(':').map(Number);
-		if (parts.length === 2) return parts[0] * 60 + parts[1];
-		if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-		return parts[0];
-	}
-
-	function parseSize(s: string) {
-		const [val, unit] = s.split(' ');
-		const num = parseFloat(val);
-		if (unit === 'KB') return num * 1024;
-		if (unit === 'MB') return num * 1024 * 1024;
-		if (unit === 'GB') return num * 1024 * 1024 * 1024;
-		return num;
-	}
-
 	function getDisplayName(filename: string) {
 		return filename.replace(/\.[^/.]+$/, '');
 	}
 
-	let filteredAndSortedFiles = $derived(() => {
-		let result = [...files];
-
-		// Apply Filters
-		if (selectedFormats.length > 0) {
-			result = result.filter((f) => selectedFormats.includes(f.format));
-		}
-		if (selectedTags.length > 0) {
-			result = result.filter((f) => f.tags.some((t) => selectedTags.includes(t)));
-		}
-
-		// Apply Sorting
-		if (sortColumn) {
-			result.sort((a, b) => {
-				const valA = a[sortColumn as keyof FileItem];
-				const valB = b[sortColumn as keyof FileItem];
-
-				let compareA: string | number;
-				let compareB: string | number;
-
-				if (sortColumn === 'length' && typeof valA === 'string' && typeof valB === 'string') {
-					compareA = parseDuration(valA);
-					compareB = parseDuration(valB);
-				} else if (sortColumn === 'size' && typeof valA === 'string' && typeof valB === 'string') {
-					compareA = parseSize(valA);
-					compareB = parseSize(valB);
-				} else if (typeof valA === 'string' && typeof valB === 'string') {
-					compareA = valA.toLowerCase();
-					compareB = valB.toLowerCase();
-				} else {
-					compareA = String(valA);
-					compareB = String(valB);
-				}
-
-				if (compareA < compareB) return sortDirection === 'asc' ? -1 : 1;
-				if (compareA > compareB) return sortDirection === 'asc' ? 1 : -1;
-				return 0;
-			});
-		}
-
-		return result;
-	});
-
-	let displayedFiles = $derived(filteredAndSortedFiles());
+	let displayedFiles = $derived(collectionStore.displayedFiles);
 
 	let allSelected = $derived(displayedFiles.length > 0 && displayedFiles.every((f) => f.selected));
 	let someSelected = $derived(displayedFiles.some((f) => f.selected) && !allSelected);
@@ -250,15 +191,15 @@
 	}
 
 	function toggleSort(col: string) {
-		if (sortColumn === col) {
-			if (sortDirection === 'asc') sortDirection = 'desc';
+		if (collectionStore.sortColumn === col) {
+			if (collectionStore.sortDirection === 'asc') collectionStore.sortDirection = 'desc';
 			else {
-				sortColumn = null;
-				sortDirection = 'asc';
+				collectionStore.sortColumn = null;
+				collectionStore.sortDirection = 'asc';
 			}
 		} else {
-			sortColumn = col;
-			sortDirection = 'asc';
+			collectionStore.sortColumn = col;
+			collectionStore.sortDirection = 'asc';
 		}
 	}
 
@@ -269,18 +210,18 @@
 	}
 
 	function toggleFormatFilter(format: string) {
-		if (selectedFormats.includes(format)) {
-			selectedFormats = selectedFormats.filter((f) => f !== format);
+		if (collectionStore.selectedFormats.includes(format)) {
+			collectionStore.selectedFormats = collectionStore.selectedFormats.filter((f) => f !== format);
 		} else {
-			selectedFormats = [...selectedFormats, format];
+			collectionStore.selectedFormats = [...collectionStore.selectedFormats, format];
 		}
 	}
 
 	function toggleTagFilter(tag: string) {
-		if (selectedTags.includes(tag)) {
-			selectedTags = selectedTags.filter((t) => t !== tag);
+		if (collectionStore.selectedTags.includes(tag)) {
+			collectionStore.selectedTags = collectionStore.selectedTags.filter((t) => t !== tag);
 		} else {
-			selectedTags = [...selectedTags, tag];
+			collectionStore.selectedTags = [...collectionStore.selectedTags, tag];
 		}
 	}
 

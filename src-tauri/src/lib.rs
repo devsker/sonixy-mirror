@@ -3,8 +3,12 @@ mod collection;
 use std::sync::{Arc, Mutex, Condvar};
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::fs::File;
+use std::io::BufReader;
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager, State};
 use crate::collection::FileItem;
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
 
 struct WaveformTask {
     id: String,
@@ -17,9 +21,22 @@ struct WaveformQueue {
     cvar: Condvar,
 }
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+struct AudioState {
+    _handle: OutputStreamHandle,
+    sink: Mutex<Sink>,
+    global_volume: Mutex<f32>,
+    current_file_gain: Mutex<f32>,
+    start_instant: Mutex<Option<Instant>>,
+    elapsed_before_pause: Mutex<Duration>,
+    suppress_ended: Arc<AtomicBool>,
+}
+
 struct AppState {
     collection_path: Mutex<Option<PathBuf>>,
     waveform_queue: Arc<WaveformQueue>,
+    audio: AudioState,
 }
 
 fn queue_missing_waveforms(folder_path: &PathBuf, queue: &Arc<WaveformQueue>, normalize: bool) -> Result<Vec<String>, String> {
@@ -228,8 +245,135 @@ fn regenerate_waveforms(state: State<'_, AppState>) -> Result<Vec<String>, Strin
     Ok(missing_ids)
 }
 
+#[tauri::command]
+fn play_audio(path: String, gain: f32, state: State<'_, AppState>) -> Result<(), String> {
+    let folder_path = state.collection_path.lock().unwrap();
+    let full_path = if let Some(ref p) = *folder_path {
+        p.join(path)
+    } else {
+        PathBuf::from(path)
+    };
+
+    let file = File::open(full_path).map_err(|e| e.to_string())?;
+    let source = Decoder::new(BufReader::new(file)).map_err(|e| e.to_string())?;
+
+    state.audio.suppress_ended.store(true, Ordering::SeqCst);
+    let sink = state.audio.sink.lock().unwrap();
+    sink.stop();
+    
+    {
+        let mut g = state.audio.current_file_gain.lock().unwrap();
+        *g = gain;
+        let vol = state.audio.global_volume.lock().unwrap();
+        sink.set_volume(*vol * gain);
+    }
+
+    sink.append(source);
+    sink.play();
+    state.audio.suppress_ended.store(false, Ordering::SeqCst);
+
+    {
+        let mut start = state.audio.start_instant.lock().unwrap();
+        *start = Some(Instant::now());
+        let mut elapsed = state.audio.elapsed_before_pause.lock().unwrap();
+        *elapsed = Duration::ZERO;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn pause_audio(state: State<'_, AppState>) {
+    let sink = state.audio.sink.lock().unwrap();
+    if !sink.is_paused() {
+        sink.pause();
+        let mut start = state.audio.start_instant.lock().unwrap();
+        if let Some(s) = *start {
+            let mut elapsed = state.audio.elapsed_before_pause.lock().unwrap();
+            *elapsed += s.elapsed();
+            *start = None;
+        }
+    }
+}
+
+#[tauri::command]
+fn resume_audio(state: State<'_, AppState>) {
+    let sink = state.audio.sink.lock().unwrap();
+    if sink.is_paused() {
+        sink.play();
+        let mut start = state.audio.start_instant.lock().unwrap();
+        *start = Some(Instant::now());
+    }
+}
+
+#[tauri::command]
+fn stop_audio(state: State<'_, AppState>) {
+    state.audio.suppress_ended.store(true, Ordering::SeqCst);
+    let sink = state.audio.sink.lock().unwrap();
+    sink.stop();
+    state.audio.suppress_ended.store(false, Ordering::SeqCst);
+    let mut start = state.audio.start_instant.lock().unwrap();
+    *start = None;
+    let mut elapsed = state.audio.elapsed_before_pause.lock().unwrap();
+    *elapsed = Duration::ZERO;
+}
+
+#[tauri::command]
+fn set_volume(volume: f32, state: State<'_, AppState>) {
+    let mut global_vol = state.audio.global_volume.lock().unwrap();
+    *global_vol = volume;
+    let sink = state.audio.sink.lock().unwrap();
+    let gain = state.audio.current_file_gain.lock().unwrap();
+    sink.set_volume(volume * *gain);
+}
+
+#[tauri::command]
+fn get_audio_time(state: State<'_, AppState>) -> f32 {
+    let start = state.audio.start_instant.lock().unwrap();
+    let elapsed = state.audio.elapsed_before_pause.lock().unwrap();
+    
+    if let Some(s) = *start {
+        (*elapsed + s.elapsed()).as_secs_f32()
+    } else {
+        elapsed.as_secs_f32()
+    }
+}
+
+#[tauri::command]
+fn seek_audio(time_seconds: f32, state: State<'_, AppState>) -> Result<(), String> {
+    println!("Seeking to {}s", time_seconds);
+    let sink = state.audio.sink.lock().unwrap();
+    let duration = Duration::from_secs_f32(time_seconds);
+    if let Err(e) = sink.try_seek(duration) {
+        println!("Seek error: {}", e);
+        return Err(e.to_string());
+    }
+    
+    let mut start = state.audio.start_instant.lock().unwrap();
+    let mut elapsed = state.audio.elapsed_before_pause.lock().unwrap();
+    *elapsed = duration;
+    if start.is_some() {
+        *start = Some(Instant::now());
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let (stream, stream_handle) = OutputStream::try_default().expect("failed to find audio output device");
+    Box::leak(Box::new(stream));
+    let sink = Sink::try_new(&stream_handle).expect("failed to create audio sink");
+    
+    let audio_state = AudioState {
+        _handle: stream_handle,
+        sink: Mutex::new(sink),
+        global_volume: Mutex::new(1.0),
+        current_file_gain: Mutex::new(1.0),
+        start_instant: Mutex::new(None),
+        elapsed_before_pause: Mutex::new(Duration::ZERO),
+        suppress_ended: Arc::new(AtomicBool::new(false)),
+    };
+
     let waveform_queue = Arc::new(WaveformQueue {
         tasks: Mutex::new(VecDeque::new()),
         cvar: Condvar::new(),
@@ -239,9 +383,31 @@ pub fn run() {
         .manage(AppState {
             collection_path: Mutex::new(None),
             waveform_queue: Arc::clone(&waveform_queue),
+            audio: audio_state,
         })
         .setup(move |app| {
             let handle = app.handle().clone();
+
+            // Background thread for audio completion events
+            let handle_ended = handle.clone();
+            std::thread::spawn(move || {
+                let mut was_empty = true;
+                loop {
+                    std::thread::sleep(Duration::from_millis(100));
+                    let state = handle_ended.state::<AppState>();
+                    let sink = state.audio.sink.lock().unwrap();
+                    let is_empty = sink.empty();
+                    if !is_empty {
+                        was_empty = false;
+                    } else if !was_empty {
+                        // Just became empty
+                        if !state.audio.suppress_ended.load(Ordering::SeqCst) {
+                            let _ = handle_ended.emit("audio-ended", ());
+                        }
+                        was_empty = true;
+                    }
+                }
+            });
             
             for _ in 0..4 {
                 let handle = handle.clone();
@@ -306,7 +472,14 @@ pub fn run() {
             add_files_to_collection,
             relocate_file,
             remove_file_from_collection,
-            regenerate_waveforms
+            regenerate_waveforms,
+            play_audio,
+            pause_audio,
+            resume_audio,
+            stop_audio,
+            set_volume,
+            get_audio_time,
+            seek_audio
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
