@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import { remove } from '@tauri-apps/plugin-fs';
+import { audioPlayer } from './audio-player.svelte';
 
 export interface FileItem {
     id: string;
@@ -106,8 +107,9 @@ class CollectionStore {
         this.tasks = this.tasks.filter(t => t.id !== id);
     }
 
-    async openCollectionByPath(path: string) {
+    async function openCollectionByPath(path: string) {
         try {
+            audioPlayer.stop();
             this.loading = true;
             this.collectionPath = path;
             this.processingFiles = new Set();
