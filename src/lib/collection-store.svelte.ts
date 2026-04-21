@@ -107,7 +107,7 @@ class CollectionStore {
         this.tasks = this.tasks.filter(t => t.id !== id);
     }
 
-    async function openCollectionByPath(path: string) {
+    async openCollectionByPath(path: string) {
         try {
             audioPlayer.stop();
             this.loading = true;
