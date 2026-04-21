@@ -128,7 +128,12 @@
 
 	<div class="controls">
         {#if collectionPath}
-            <div class="task-container" onclick={(e) => e.stopPropagation()}>
+            <div 
+                class="task-container" 
+                onclick={(e) => e.stopPropagation()} 
+                onkeydown={(e) => e.stopPropagation()}
+                role="presentation"
+            >
                 <button 
                     class="control-btn task-btn" 
                     onclick={toggleTasks} 
