@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import { Minus, Square, X, RefreshCw, CheckCircle2, AlertCircle, Loader2, Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Volume1 } from 'lucide-svelte';
+	import { Minus, Square, X, RefreshCw, CheckCircle2, AlertCircle, Loader2, Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Volume1, FolderOpen } from 'lucide-svelte';
 	import { collectionStore } from '$lib/collection-store.svelte';
 	import { audioPlayer } from '$lib/audio-player.svelte';
 
@@ -64,6 +64,9 @@
 <div data-tauri-drag-region class="titlebar">
 	<div data-tauri-drag-region class="title-section">
 		<span class="title">Sonixy</span>
+        <button class="folder-btn" onclick={() => collectionStore.openCollection()} aria-label="Open Collection">
+            <FolderOpen size={14} />
+        </button>
 	</div>
 
     <div class="playback-controls">
@@ -249,6 +252,30 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
+
+    .folder-btn {
+        display: inline-flex;
+        justify-content: center;
+        align-items: center;
+        width: 28px;
+        height: 28px;
+        margin-left: 8px;
+        border: none;
+        background: transparent;
+        color: var(--icon-color);
+        cursor: default;
+        border-radius: 4px;
+        transition: background-color 0.1s, color 0.1s;
+    }
+
+    .folder-btn:hover {
+        background: rgba(0, 0, 0, 0.05);
+        color: var(--icon-hover);
+    }
+
+    :global(html.dark) .folder-btn:hover {
+        background: rgba(255, 255, 255, 0.05);
+    }
 
     .playback-controls {
         display: flex;
