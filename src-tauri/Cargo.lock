@@ -3935,6 +3935,7 @@ dependencies = [
 name = "sonixy"
 version = "0.1.0"
 dependencies = [
+ "hound",
  "lofty",
  "rodio",
  "rusqlite",

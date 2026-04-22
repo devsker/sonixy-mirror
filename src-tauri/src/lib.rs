@@ -358,6 +358,31 @@ fn seek_audio(time_seconds: f32, state: State<'_, AppState>) -> Result<(), Strin
     Ok(())
 }
 
+#[tauri::command]
+fn prepare_drag_clip(
+    id: String, 
+    start_pct: f32, 
+    end_pct: f32, 
+    state: State<'_, AppState>
+) -> Result<String, String> {
+    let state_path = state.collection_path.lock().unwrap();
+    let folder_path = state_path.as_ref().ok_or("No collection open")?;
+    
+    let conn = collection::init_db(folder_path).map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT filename, filepath FROM files WHERE id = ?1").map_err(|e| e.to_string())?;
+    let (filename, relative_path): (String, String) = stmt.query_row([&id], |row| Ok((row.get(0)?, row.get(1)?))).map_err(|e| e.to_string())?;
+    
+    let full_path = folder_path.join(relative_path);
+    let temp_dir = std::env::temp_dir();
+    let clip_filename = format!("clip_{}_{}", id, filename);
+    let mut dest_path = temp_dir.join(clip_filename);
+    dest_path.set_extension("wav");
+
+    collection::trim_and_save(&full_path, &dest_path, start_pct, end_pct)?;
+
+    Ok(dest_path.to_string_lossy().to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let (stream, stream_handle) = OutputStream::try_default().expect("failed to find audio output device");
@@ -480,7 +505,8 @@ pub fn run() {
             stop_audio,
             set_volume,
             get_audio_time,
-            seek_audio
+            seek_audio,
+            prepare_drag_clip
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

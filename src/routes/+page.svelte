@@ -4,7 +4,7 @@
 	import { collectionStore } from '$lib/collection-store.svelte';
 	import { audioPlayer } from '$lib/audio-player.svelte';
 
-	let selectedIds = $state([]);
+	let selectedIds = $state<string[]>([]);
 
 	function handleSelectionChange(ids: string[]) {
 		selectedIds = ids;

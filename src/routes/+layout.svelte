@@ -30,15 +30,17 @@
 
 	const appWindow = getCurrentWindow();
 	
-	onMount(async () => {
-		const unlisten = await appWindow.onDragDropEvent((event) => {
+	onMount(() => {
+		const unlistenPromise = appWindow.onDragDropEvent((event) => {
 			if (event.payload.type === 'drop' && collectionStore.collectionPath) {
 				dropPaths = event.payload.paths;
 				showDropPrompt = true;
 			}
 		});
 
-		return () => unlisten();
+		return () => {
+			unlistenPromise.then(f => f());
+		};
 	});
 
 	async function handleDropSelect(action: 'copy' | 'move') {
@@ -147,6 +149,7 @@
 		--sidebar-bg: #f3f3f3;
 		--border-color: #e5e5e5;
 		--text-color: #333333;
+		--text-main: #333333;
 		--text-muted: #666666;
 		--icon-color: #616161;
 		--icon-active: #007acc;
@@ -161,6 +164,7 @@
 		--sidebar-bg: #333333;
 		--border-color: #252525;
 		--text-color: #ffffff;
+		--text-main: #ffffff;
 		--text-muted: #cccccc;
 		--icon-color: #858585;
 		--icon-active: #ffffff;

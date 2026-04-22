@@ -1,28 +1,29 @@
-<script>
+<script lang="ts">
 	import { getContext } from 'svelte';
+	import { settingsStore, type Settings } from '$lib/settings-store.svelte';
 	import { collectionStore } from '$lib/collection-store.svelte';
 
-	const settings = getContext('settings-context');
+	const settings = getContext<Settings>('settings-context') || settingsStore;
 
 	let theme = $derived(settings.theme);
 	let showCheckboxes = $derived(settings.showCheckboxes);
 	let normalizeOnImport = $derived(settings.normalizeOnImport);
 	let playbackDelay = $derived(settings.playbackDelay);
 	
-	function handleThemeChange(e) {
-		settings.theme = e.target.value;
+	function handleThemeChange(e: Event) {
+		settings.theme = (e.target as HTMLSelectElement).value as 'system' | 'dark' | 'light';
 	}
 
-	function handleCheckboxToggle(e) {
-		settings.showCheckboxes = e.target.checked;
+	function handleCheckboxToggle(e: Event) {
+		settings.showCheckboxes = (e.target as HTMLInputElement).checked;
 	}
 
-	function handleNormalizeToggle(e) {
-		settings.normalizeOnImport = e.target.checked;
+	function handleNormalizeToggle(e: Event) {
+		settings.normalizeOnImport = (e.target as HTMLInputElement).checked;
 	}
 
-	function handlePlaybackDelayChange(e) {
-		settings.playbackDelay = parseInt(e.target.value, 10);
+	function handlePlaybackDelayChange(e: Event) {
+		settings.playbackDelay = parseInt((e.target as HTMLInputElement).value, 10);
 	}
 </script>
 
