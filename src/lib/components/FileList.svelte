@@ -4,6 +4,8 @@
 	import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu';
 	import { revealItemInDir } from '@tauri-apps/plugin-opener';
 	import { ask, message } from '@tauri-apps/plugin-dialog';
+	import { resolveResource } from '@tauri-apps/api/path';
+	import { startDrag } from '@crabnebula/tauri-plugin-drag';
 	import { collectionStore, type FileItem } from '$lib/collection-store.svelte';
 	import { audioPlayer } from '$lib/audio-player.svelte';
 
@@ -188,6 +190,30 @@
 
 	function handleDragEnd() {
 		draggingColumn = null;
+	}
+
+	async function handleFileDragStart(event: DragEvent, file: FileItem) {
+		if (file.missing || !collectionPath) return;
+		event.preventDefault();
+		
+		// If the file is part of selection, drag all selected files
+		// Otherwise, drag just this file
+		const selectedFiles = files.filter(f => f.selected && !f.missing);
+		let pathsToDrag: string[] = [];
+
+		if (file.selected) {
+			pathsToDrag = selectedFiles.map(f => `${collectionPath}/${f.filepath}`.replace(/[\\\/]+/g, '/'));
+		} else {
+			pathsToDrag = [`${collectionPath}/${file.filepath}`.replace(/[\\\/]+/g, '/')];
+		}
+
+		if (pathsToDrag.length > 0) {
+			const iconPath = await resolveResource('static/tauri.svg');
+			await startDrag({
+				item: pathsToDrag,
+				icon: iconPath
+			});
+		}
 	}
 
 	function toggleSort(col: string) {
@@ -420,6 +446,8 @@
 					onkeydown={(e) => e.key === 'Enter' && handleSelection(e as unknown as MouseEvent, i)}
 					oncontextmenu={(e) => handleContextMenu(e, file)}
 					tabindex="0"
+					draggable="true"
+					ondragstart={(e) => handleFileDragStart(e, file)}
 				>
 					{#if showCheckboxes}
 						<td class="checkbox-col">
