@@ -8,7 +8,7 @@ use std::io::BufReader;
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager, State};
 use crate::collection::FileItem;
-use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 
 struct WaveformTask {
     id: String,
@@ -52,7 +52,7 @@ fn queue_missing_waveforms(folder_path: &PathBuf, queue: &Arc<WaveformQueue>, no
     }).map_err(|e| e.to_string())?;
 
     let mut added_ids = Vec::new();
-    let mut tasks = queue.tasks.lock().unwrap();
+    let mut tasks = queue.tasks.lock().map_err(|_| "State poisoned".to_string())?;
     for row in missing_iter {
         if let Ok((id, relative_path)) = row {
             // Avoid duplicates in queue
@@ -82,7 +82,7 @@ fn open_collection(path: String, state: State<'_, AppState>) -> Result<(Vec<File
     let files = collection::get_all_files(&folder_path, &conn).map_err(|e| e.to_string())?;
 
     {
-        let mut state_path = state.collection_path.lock().unwrap();
+        let mut state_path = state.collection_path.lock().map_err(|_| "State poisoned".to_string())?;
         *state_path = Some(folder_path.clone());
     }
 
@@ -96,7 +96,7 @@ fn open_collection(path: String, state: State<'_, AppState>) -> Result<(Vec<File
 
 #[tauri::command]
 fn get_collection_files(state: State<'_, AppState>) -> Result<Vec<FileItem>, String> {
-    let state_path = state.collection_path.lock().unwrap();
+    let state_path = state.collection_path.lock().map_err(|_| "State poisoned".to_string())?;
     let folder_path = state_path.as_ref().ok_or("No collection open")?;
     
     let conn = collection::init_db(folder_path).map_err(|e| e.to_string())?;
@@ -107,7 +107,7 @@ fn get_collection_files(state: State<'_, AppState>) -> Result<Vec<FileItem>, Str
 
 #[tauri::command]
 fn get_waveform(id: String, state: State<'_, AppState>) -> Result<Option<Vec<u8>>, String> {
-    let state_path = state.collection_path.lock().unwrap();
+    let state_path = state.collection_path.lock().map_err(|_| "State poisoned".to_string())?;
     let folder_path = state_path.as_ref().ok_or("No collection open")?;
     
     let conn = collection::init_db(folder_path).map_err(|e| e.to_string())?;
@@ -118,7 +118,7 @@ fn get_waveform(id: String, state: State<'_, AppState>) -> Result<Option<Vec<u8>
         // Prioritize this waveform if it's missing
         let mut stmt = conn.prepare("SELECT filepath FROM files WHERE id = ?1").map_err(|e| e.to_string())?;
         if let Ok(relative_path) = stmt.query_row([&id], |row| row.get::<_, String>(0)) {
-            let mut tasks = state.waveform_queue.tasks.lock().unwrap();
+            let mut tasks = state.waveform_queue.tasks.lock().map_err(|_| "State poisoned".to_string())?;
             // Remove if already in queue, then push to front
             tasks.retain(|t| t.id != id);
             tasks.push_front(WaveformTask { id, relative_path, normalize: false });
@@ -131,7 +131,7 @@ fn get_waveform(id: String, state: State<'_, AppState>) -> Result<Option<Vec<u8>
 
 #[tauri::command]
 fn relocate_file(id: String, new_path: String, action: String, state: State<'_, AppState>) -> Result<Vec<FileItem>, String> {
-    let state_path = state.collection_path.lock().unwrap();
+    let state_path = state.collection_path.lock().map_err(|_| "State poisoned".to_string())?;
     let folder_path = state_path.as_ref().ok_or("No collection open")?;
     
     let conn = collection::init_db(folder_path).map_err(|e| e.to_string())?;
@@ -164,7 +164,7 @@ fn relocate_file(id: String, new_path: String, action: String, state: State<'_, 
 
 #[tauri::command]
 fn remove_file_from_collection(id: String, state: State<'_, AppState>) -> Result<Vec<FileItem>, String> {
-    let state_path = state.collection_path.lock().unwrap();
+    let state_path = state.collection_path.lock().map_err(|_| "State poisoned".to_string())?;
     let folder_path = state_path.as_ref().ok_or("No collection open")?;
     
     let conn = collection::init_db(folder_path).map_err(|e| e.to_string())?;
@@ -181,7 +181,7 @@ fn add_files_to_collection(
     normalize: bool,
     state: State<'_, AppState>
 ) -> Result<(Vec<FileItem>, Vec<String>), String> {
-    let state_path = state.collection_path.lock().unwrap();
+    let state_path = state.collection_path.lock().map_err(|_| "State poisoned".to_string())?;
     let folder_path = state_path.as_ref().ok_or("No collection open")?;
     
     let conn = collection::init_db(folder_path).map_err(|e| e.to_string())?;
@@ -229,7 +229,7 @@ fn add_files_to_collection(
 
 #[tauri::command]
 fn regenerate_waveforms(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    let state_path = state.collection_path.lock().unwrap();
+    let state_path = state.collection_path.lock().map_err(|_| "State poisoned".to_string())?;
     let folder_path = state_path.as_ref().ok_or("No collection open")?;
     
     let conn = collection::init_db(folder_path).map_err(|e| e.to_string())?;
@@ -237,7 +237,7 @@ fn regenerate_waveforms(state: State<'_, AppState>) -> Result<Vec<String>, Strin
     
     // Clear the current queue
     {
-        let mut tasks = state.waveform_queue.tasks.lock().unwrap();
+        let mut tasks = state.waveform_queue.tasks.lock().map_err(|_| "State poisoned".to_string())?;
         tasks.clear();
     }
 
@@ -247,7 +247,7 @@ fn regenerate_waveforms(state: State<'_, AppState>) -> Result<Vec<String>, Strin
 
 #[tauri::command]
 fn play_audio(path: String, gain: f32, state: State<'_, AppState>) -> Result<(), String> {
-    let folder_path = state.collection_path.lock().unwrap();
+    let folder_path = state.collection_path.lock().map_err(|_| "State poisoned".to_string())?;
     let full_path = if let Some(ref p) = *folder_path {
         p.join(path)
     } else {
@@ -255,16 +255,16 @@ fn play_audio(path: String, gain: f32, state: State<'_, AppState>) -> Result<(),
     };
 
     let file = File::open(full_path).map_err(|e| e.to_string())?;
-    let source = Decoder::new(BufReader::new(file)).map_err(|e| e.to_string())?;
+    let source = Decoder::new(BufReader::new(file)).map_err(|e| e.to_string())?.buffered();
 
     state.audio.suppress_ended.store(true, Ordering::SeqCst);
-    let sink = state.audio.sink.lock().unwrap();
+    let sink = state.audio.sink.lock().map_err(|_| "State poisoned".to_string())?;
     sink.stop();
     
     {
-        let mut g = state.audio.current_file_gain.lock().unwrap();
+        let mut g = state.audio.current_file_gain.lock().map_err(|_| "State poisoned".to_string())?;
         *g = gain;
-        let vol = state.audio.global_volume.lock().unwrap();
+        let vol = state.audio.global_volume.lock().map_err(|_| "State poisoned".to_string())?;
         sink.set_volume(*vol * gain);
     }
 
@@ -273,9 +273,9 @@ fn play_audio(path: String, gain: f32, state: State<'_, AppState>) -> Result<(),
     state.audio.suppress_ended.store(false, Ordering::SeqCst);
 
     {
-        let mut start = state.audio.start_instant.lock().unwrap();
+        let mut start = state.audio.start_instant.lock().map_err(|_| "State poisoned".to_string())?;
         *start = Some(Instant::now());
-        let mut elapsed = state.audio.elapsed_before_pause.lock().unwrap();
+        let mut elapsed = state.audio.elapsed_before_pause.lock().map_err(|_| "State poisoned".to_string())?;
         *elapsed = Duration::ZERO;
     }
 
@@ -284,12 +284,12 @@ fn play_audio(path: String, gain: f32, state: State<'_, AppState>) -> Result<(),
 
 #[tauri::command]
 fn pause_audio(state: State<'_, AppState>) {
-    let sink = state.audio.sink.lock().unwrap();
+    let Ok(sink) = state.audio.sink.lock() else { return; };
     if !sink.is_paused() {
         sink.pause();
-        let mut start = state.audio.start_instant.lock().unwrap();
+        let Ok(mut start) = state.audio.start_instant.lock() else { return; };
         if let Some(s) = *start {
-            let mut elapsed = state.audio.elapsed_before_pause.lock().unwrap();
+            let Ok(mut elapsed) = state.audio.elapsed_before_pause.lock() else { return; };
             *elapsed += s.elapsed();
             *start = None;
         }
@@ -298,10 +298,10 @@ fn pause_audio(state: State<'_, AppState>) {
 
 #[tauri::command]
 fn resume_audio(state: State<'_, AppState>) {
-    let sink = state.audio.sink.lock().unwrap();
+    let Ok(sink) = state.audio.sink.lock() else { return; };
     if sink.is_paused() {
         sink.play();
-        let mut start = state.audio.start_instant.lock().unwrap();
+        let Ok(mut start) = state.audio.start_instant.lock() else { return; };
         *start = Some(Instant::now());
     }
 }
@@ -309,28 +309,28 @@ fn resume_audio(state: State<'_, AppState>) {
 #[tauri::command]
 fn stop_audio(state: State<'_, AppState>) {
     state.audio.suppress_ended.store(true, Ordering::SeqCst);
-    let sink = state.audio.sink.lock().unwrap();
+    let Ok(sink) = state.audio.sink.lock() else { return; };
     sink.stop();
     state.audio.suppress_ended.store(false, Ordering::SeqCst);
-    let mut start = state.audio.start_instant.lock().unwrap();
+    let Ok(mut start) = state.audio.start_instant.lock() else { return; };
     *start = None;
-    let mut elapsed = state.audio.elapsed_before_pause.lock().unwrap();
+    let Ok(mut elapsed) = state.audio.elapsed_before_pause.lock() else { return; };
     *elapsed = Duration::ZERO;
 }
 
 #[tauri::command]
 fn set_volume(volume: f32, state: State<'_, AppState>) {
-    let mut global_vol = state.audio.global_volume.lock().unwrap();
+    let Ok(mut global_vol) = state.audio.global_volume.lock() else { return; };
     *global_vol = volume;
-    let sink = state.audio.sink.lock().unwrap();
-    let gain = state.audio.current_file_gain.lock().unwrap();
+    let Ok(sink) = state.audio.sink.lock() else { return; };
+    let Ok(gain) = state.audio.current_file_gain.lock() else { return; };
     sink.set_volume(volume * *gain);
 }
 
 #[tauri::command]
 fn get_audio_time(state: State<'_, AppState>) -> f32 {
-    let start = state.audio.start_instant.lock().unwrap();
-    let elapsed = state.audio.elapsed_before_pause.lock().unwrap();
+    let Ok(start) = state.audio.start_instant.lock() else { return 0.0; };
+    let Ok(elapsed) = state.audio.elapsed_before_pause.lock() else { return 0.0; };
     
     if let Some(s) = *start {
         (*elapsed + s.elapsed()).as_secs_f32()
@@ -342,15 +342,15 @@ fn get_audio_time(state: State<'_, AppState>) -> f32 {
 #[tauri::command]
 fn seek_audio(time_seconds: f32, state: State<'_, AppState>) -> Result<(), String> {
     println!("Seeking to {}s", time_seconds);
-    let sink = state.audio.sink.lock().unwrap();
+    let sink = state.audio.sink.lock().map_err(|_| "State poisoned".to_string())?;
     let duration = Duration::from_secs_f32(time_seconds);
     if let Err(e) = sink.try_seek(duration) {
         println!("Seek error: {}", e);
         return Err(e.to_string());
     }
     
-    let mut start = state.audio.start_instant.lock().unwrap();
-    let mut elapsed = state.audio.elapsed_before_pause.lock().unwrap();
+    let mut start = state.audio.start_instant.lock().map_err(|_| "State poisoned".to_string())?;
+    let mut elapsed = state.audio.elapsed_before_pause.lock().map_err(|_| "State poisoned".to_string())?;
     *elapsed = duration;
     if start.is_some() {
         *start = Some(Instant::now());
@@ -365,7 +365,7 @@ fn prepare_drag_clip(
     end_pct: f32, 
     state: State<'_, AppState>
 ) -> Result<String, String> {
-    let state_path = state.collection_path.lock().unwrap();
+    let state_path = state.collection_path.lock().map_err(|_| "State poisoned".to_string())?;
     let folder_path = state_path.as_ref().ok_or("No collection open")?;
     
     let conn = collection::init_db(folder_path).map_err(|e| e.to_string())?;
@@ -420,7 +420,7 @@ pub fn run() {
                 loop {
                     std::thread::sleep(Duration::from_millis(100));
                     let state = handle_ended.state::<AppState>();
-                    let sink = state.audio.sink.lock().unwrap();
+                    let Ok(sink) = state.audio.sink.lock() else { break; };
                     let is_empty = sink.empty();
                     if !is_empty {
                         was_empty = false;
@@ -441,15 +441,19 @@ pub fn run() {
                 std::thread::spawn(move || {
                     loop {
                         let task = {
-                            let mut tasks = queue.tasks.lock().unwrap();
+                            let Ok(mut tasks) = queue.tasks.lock() else { break; };
                             while tasks.is_empty() {
-                                tasks = queue.cvar.wait(tasks).unwrap();
+                                tasks = match queue.cvar.wait(tasks) {
+                                    Ok(t) => t,
+                                    Err(_) => return,
+                                };
                             }
-                            tasks.pop_front().unwrap()
+                            let Some(task) = tasks.pop_front() else { continue; };
+                            task
                         };
 
                         // Get collection path
-                        let folder_path = handle.state::<AppState>().collection_path.lock().unwrap().clone();
+                        let Ok(folder_path) = handle.state::<AppState>().collection_path.lock().map(|g| g.clone()) else { break; };
 
                         if let Some(folder_path) = folder_path {
                             let full_path = folder_path.join(&task.relative_path);
