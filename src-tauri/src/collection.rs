@@ -145,23 +145,28 @@ pub fn extract_metadata(path: &Path) -> Option<FileItem> {
     })
 }
 
+use rayon::prelude::*;
+
 pub fn scan_folder(folder_path: &Path, conn: &Connection) -> rusqlite::Result<()> {
-    for entry in WalkDir::new(folder_path)
+    // 1. Get all file paths that are not hidden
+    let entries: Vec<_> = WalkDir::new(folder_path)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
-    {
-        let path = entry.path();
-        
-        // Skip hidden files/folders (including our db)
-        if path.file_name().map_or(false, |s| s.to_string_lossy().starts_with('.')) {
-            continue;
-        }
+        .filter(|e| {
+            !e.file_name()
+                .to_string_lossy()
+                .starts_with('.')
+        })
+        .collect();
 
+    // 2. Filter out files already in DB (this part is still sequential but fast)
+    let mut files_to_scan = Vec::new();
+    for entry in entries {
+        let path = entry.path();
         let relative_path = path.strip_prefix(folder_path).unwrap_or(path);
         let filepath_str = relative_path.to_string_lossy().to_string();
 
-        // Check if file already in DB
         let exists: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM files WHERE filepath = ?1)",
             params![filepath_str],
@@ -169,25 +174,49 @@ pub fn scan_folder(folder_path: &Path, conn: &Connection) -> rusqlite::Result<()
         )?;
 
         if !exists {
-            if let Some(mut item) = extract_metadata(path) {
-                item.filepath = filepath_str;
-                conn.execute(
-                    "INSERT INTO files (id, filename, filepath, format, length, duration, size, tags, gain) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                    params![
-                        item.id,
-                        item.filename,
-                        item.filepath,
-                        item.format,
-                        item.length,
-                        item.duration,
-                        item.size,
-                        serde_json::to_string(&item.tags).unwrap_or_else(|_| "[]".to_string()),
-                        item.gain
-                    ],
-                )?;
-            }
+            files_to_scan.push((path.to_path_buf(), filepath_str));
         }
     }
+
+    if files_to_scan.is_empty() {
+        return Ok(());
+    }
+
+    // 3. Extract metadata in parallel
+    let processed_items: Vec<FileItem> = files_to_scan
+        .into_par_iter()
+        .filter_map(|(path, filepath_str)| {
+            if let Some(mut item) = extract_metadata(&path) {
+                item.filepath = filepath_str;
+                Some(item)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // 4. Insert into DB in a single transaction
+    let mut mut_conn = Connection::open(folder_path.join(".sonixy.db"))?;
+    mut_conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    let tx = mut_conn.transaction()?;
+
+    for item in processed_items {
+        tx.execute(
+            "INSERT INTO files (id, filename, filepath, format, length, duration, size, tags, gain) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                item.id,
+                item.filename,
+                item.filepath,
+                item.format,
+                item.length,
+                item.duration,
+                item.size,
+                serde_json::to_string(&item.tags).unwrap_or_else(|_| "[]".to_string()),
+                item.gain
+            ],
+        )?;
+    }
+    tx.commit()?;
     
     Ok(())
 }
