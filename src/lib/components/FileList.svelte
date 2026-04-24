@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
-	import { ChevronUp, ChevronDown, Filter, FolderOpen, Loader2, AlertTriangle, Trash2, Search, Circle } from 'lucide-svelte';
+	import { ChevronUp, ChevronDown, Filter, FolderOpen, Loader2, AlertTriangle, Trash2, Search, Circle, Tag, Plus, X } from 'lucide-svelte';
 	import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu';
 	import { revealItemInDir } from '@tauri-apps/plugin-opener';
 	import { ask, message } from '@tauri-apps/plugin-dialog';
@@ -112,6 +112,15 @@
 					text: audioPlayer.currentFileId === file.id && audioPlayer.isPlaying ? 'Pause' : 'Play',
 					enabled: !file.missing,
 					action: () => audioPlayer.toggle(file)
+				}),
+				await PredefinedMenuItem.new({ item: 'Separator' }),
+				await MenuItem.new({
+					text: 'Add Tag...',
+					enabled: !file.missing,
+					action: () => {
+						taggingFile = file;
+						newTagValue = '';
+					}
 				}),
 				await PredefinedMenuItem.new({ item: 'Separator' }),
 				await MenuItem.new({
@@ -262,6 +271,31 @@
 		fileToRemove = null;
 	}
 
+	// Tagging State
+	let taggingFile = $state<FileItem | null>(null);
+	let newTagValue = $state('');
+
+	function closeTagDialog() {
+		taggingFile = null;
+		newTagValue = '';
+	}
+
+	async function handleAddTag() {
+		if (taggingFile) {
+			const tag = newTagValue.trim();
+			if (tag && !taggingFile.tags.includes(tag)) {
+				const newTags = [...taggingFile.tags, tag];
+				await collectionStore.updateTags(taggingFile.id, newTags);
+			}
+			closeTagDialog();
+		}
+	}
+
+	async function removeTag(file: FileItem, tagToRemove: string) {
+		const newTags = file.tags.filter(t => t !== tagToRemove);
+		await collectionStore.updateTags(file.id, newTags);
+	}
+
 	async function confirmRemoveFromCollection() {
 		if (fileToRemove) {
 			audioPlayer.stopIfPlaying(fileToRemove.id);
@@ -279,7 +313,15 @@
 	}
 </script>
 
-<svelte:window onclick={closePopovers} onkeydown={(e) => e.key === 'Escape' && closeRemoveDialog()} />
+<svelte:window onclick={closePopovers} onkeydown={(e) => {
+	if (e.key === 'Escape') {
+		closeRemoveDialog();
+		closeTagDialog();
+	}
+	if (e.key === 'Enter' && taggingFile) {
+		handleAddTag();
+	}
+}} />
 
 {#if fileToRemove}
 	<div class="modal-backdrop" onclick={closeRemoveDialog} role="presentation">
@@ -514,8 +556,51 @@
 								{#if !file.missing}
 									<div class="tags-wrapper">
 										{#each file.tags as tag (tag)}
-											<span class="tag">{tag}</span>
+											<span class="tag">
+												{tag}
+												<button 
+													class="tag-remove" 
+													onclick={(e) => { e.stopPropagation(); removeTag(file, tag); }}
+													title="Remove tag"
+												>
+													<X size={10} />
+												</button>
+											</span>
 										{/each}
+										
+										{#if taggingFile?.id === file.id}
+											<span class="tag tagging">
+												<span class="input-mirror">{newTagValue || 'Tag...'}</span>
+												<input 
+													type="text"
+													class="tag-input-inline"
+													bind:value={newTagValue}
+													autofocus
+													size="1"
+													onkeydown={(e) => {
+														if (e.key === 'Enter') handleAddTag();
+														if (e.key === 'Escape') closeTagDialog();
+													}}
+													onblur={() => {
+														setTimeout(closeTagDialog, 100);
+													}}
+													onclick={(e) => e.stopPropagation()}
+													placeholder="tag..."
+												/>
+											</span>
+										{:else}
+											<button 
+												class="tag-add-btn" 
+												onclick={(e) => { 
+													e.stopPropagation(); 
+													taggingFile = file; 
+													newTagValue = ''; 
+												}}
+												title="Add tag"
+											>
+												<Plus size={12} />
+											</button>
+										{/if}
 									</div>
 								{/if}
 							</td>
@@ -774,6 +859,95 @@
 		padding: 2px 8px;
 		border-radius: 4px;
 		font-size: 11px;
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		transition: all 0.1s;
+	}
+
+	.tag:hover {
+		color: var(--text-color);
+		background-color: rgba(0, 0, 0, 0.08);
+	}
+
+	:global(html.dark) .tag:hover {
+		background-color: rgba(255, 255, 255, 0.08);
+	}
+
+	.tag-remove {
+		background: none;
+		border: none;
+		padding: 0;
+		color: var(--text-muted);
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		opacity: 0.4;
+		transition: opacity 0.1s;
+	}
+
+	.tag-remove:hover {
+		opacity: 1;
+		color: #e81123;
+	}
+
+	.tag-add-btn {
+		background: none;
+		border: 1px dashed var(--border-color);
+		color: var(--text-muted);
+		padding: 2px 4px;
+		border-radius: 4px;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: all 0.1s;
+	}
+
+	.tag-add-btn:hover {
+		border-color: var(--icon-active);
+		color: var(--icon-active);
+		background-color: rgba(0, 122, 204, 0.05);
+	}
+
+	.tag.tagging {
+		background-color: var(--border-color);
+		padding: 2px 8px;
+		display: inline-grid;
+		align-items: center;
+		justify-items: start;
+	}
+
+	.tag.tagging > * {
+		grid-area: 1/1;
+	}
+
+	.input-mirror {
+		visibility: hidden;
+		white-space: pre;
+		font-size: 11px;
+		padding: 0;
+		height: 14px;
+		pointer-events: none;
+		user-select: none;
+	}
+
+	.tag-input-inline {
+		width: 100%;
+		min-width: 0;
+		background: transparent;
+		border: none;
+		color: var(--text-color);
+		font-size: 11px;
+		font-family: inherit;
+		padding: 0;
+		outline: none;
+	}
+
+	.tag-input-inline::placeholder {
+		color: var(--text-muted);
+		opacity: 0.5;
 	}
 
 	/* Popover Styles */

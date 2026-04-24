@@ -549,6 +549,38 @@ fn prepare_drag_clip(
     Ok(dest_path.to_string_lossy().to_string())
 }
 
+#[tauri::command]
+async fn update_file_tags(
+    id: String,
+    tags: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<FileItem>, String> {
+    let state_path = state
+        .collection_path
+        .lock()
+        .map_err(|_| "State poisoned".to_string())?;
+    let folder_path = state_path.as_ref().ok_or("No collection open")?;
+
+    let conn = collection::init_db(folder_path).map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare("SELECT filepath FROM files WHERE id = ?1")
+        .map_err(|e| e.to_string())?;
+    let relative_path: String = stmt
+        .query_row([&id], |row| row.get(0))
+        .map_err(|e| e.to_string())?;
+
+    let full_path = folder_path.join(relative_path);
+    if !full_path.exists() {
+        return Err("File does not exist".to_string());
+    }
+
+    collection::update_tags(&full_path, tags, &id, &conn)?;
+
+    let files = collection::get_all_files(folder_path, &conn).map_err(|e| e.to_string())?;
+    Ok(files)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let (stream, stream_handle) =
@@ -677,7 +709,8 @@ pub fn run() {
             set_volume,
             get_audio_time,
             seek_audio,
-            prepare_drag_clip
+            prepare_drag_clip,
+            update_file_tags
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

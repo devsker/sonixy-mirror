@@ -451,6 +451,19 @@ class CollectionStore {
             console.error('Failed to regenerate waveforms', e);
         }
     }
+
+    async updateTags(id: string, tags: string[]) {
+        try {
+            this.loading = true;
+            const result = await invoke<Omit<FileItem, 'selected'>[]>('update_file_tags', { id, tags });
+            this.files = result.map(f => ({ ...f, selected: false }));
+        } catch (e) {
+            console.error('Failed to update tags', e);
+            throw e;
+        } finally {
+            this.loading = false;
+        }
+    }
 }
 
 export const collectionStore = new CollectionStore();

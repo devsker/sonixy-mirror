@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use rusqlite::{params, Connection};
 use lofty::prelude::*;
 use lofty::probe::Probe;
+use lofty::tag::{Tag, TagType, Accessor};
+use lofty::config::WriteOptions;
 use std::path::Path;
 use walkdir::WalkDir;
 use uuid::Uuid;
@@ -127,7 +129,13 @@ pub fn extract_metadata(path: &Path) -> Option<FileItem> {
     let mut tags = Vec::new();
     if let Some(tag) = tagged_file.primary_tag() {
         if let Some(genre) = tag.genre() {
-            tags.push(genre.to_string());
+            // Split by common delimiters
+            for g in genre.split([';', ',']) {
+                let trimmed = g.trim();
+                if !trimmed.is_empty() {
+                    tags.push(trimmed.to_string());
+                }
+            }
         }
     }
 
@@ -143,6 +151,37 @@ pub fn extract_metadata(path: &Path) -> Option<FileItem> {
         gain: 1.0,
         missing: false,
     })
+}
+
+pub fn update_tags(path: &Path, tags: Vec<String>, id: &str, conn: &Connection) -> Result<(), String> {
+    let mut tagged_file = Probe::open(path)
+        .map_err(|e| e.to_string())?
+        .read()
+        .map_err(|e| e.to_string())?;
+
+    let tag_type = tagged_file.primary_tag_type();
+    
+    // Get existing primary tag or create a new one of the default type for the format
+    if tagged_file.primary_tag().is_none() {
+        tagged_file.insert_tag(Tag::new(tag_type));
+    }
+    
+    let tag = tagged_file.primary_tag_mut().ok_or("Failed to access tag")?;
+
+    // Join tags with a semicolon and space
+    let genre_string = tags.join("; ");
+    tag.set_genre(genre_string);
+
+    tagged_file.save_to_path(path, WriteOptions::default()).map_err(|e| e.to_string())?;
+
+    // Update database
+    let tags_json = serde_json::to_string(&tags).map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE files SET tags = ?1 WHERE id = ?2",
+        params![tags_json, id],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 use rayon::prelude::*;
