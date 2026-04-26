@@ -518,7 +518,7 @@ fn seek_audio(time_seconds: f32, state: State<'_, AppState>) -> Result<(), Strin
 }
 
 #[tauri::command]
-fn prepare_drag_clip(
+async fn prepare_drag_clip(
     id: String,
     start_pct: f32,
     end_pct: f32,

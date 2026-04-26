@@ -319,12 +319,15 @@
 
 	.selection-rect.preparing {
 		cursor: wait;
-		stroke-dasharray: 4;
-		animation: dash 1s linear infinite;
+		stroke-width: 1.5;
+		stroke-dasharray: 4 4;
+		animation: dash 0.5s linear infinite;
 	}
 
 	.selection-rect.ready {
 		cursor: grab;
+		stroke-dasharray: none;
+		stroke-width: 1;
 	}
 
 	@keyframes dash {
