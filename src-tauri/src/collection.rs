@@ -1,12 +1,10 @@
-use serde::{Deserialize, Serialize};
-use rusqlite::{params, Connection};
+use lofty::config::WriteOptions;
 use lofty::prelude::*;
 use lofty::probe::Probe;
-use lofty::tag::{Tag, TagType, Accessor};
-use lofty::config::WriteOptions;
+use lofty::tag::{Accessor, Tag};
+use rusqlite::{params, Connection};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
-use walkdir::WalkDir;
-use uuid::Uuid;
 use symphonia::core::audio::AudioBufferRef;
 use symphonia::core::audio::Signal;
 use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
@@ -14,6 +12,8 @@ use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
+use uuid::Uuid;
+use walkdir::WalkDir;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FileItem {
@@ -33,13 +33,13 @@ pub struct FileItem {
 pub fn init_db(folder_path: &Path) -> rusqlite::Result<Connection> {
     let db_path = folder_path.join(".sonixy.db");
     let conn = Connection::open(db_path)?;
-    
+
     // Set busy timeout to handle concurrent writes
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
-    
+
     // Enable WAL mode for better performance with multiple readers/writers
     let _ = conn.execute("PRAGMA journal_mode=WAL", []);
-    
+
     conn.execute(
         "CREATE TABLE IF NOT EXISTS files (
             id TEXT PRIMARY KEY,
@@ -75,7 +75,7 @@ pub fn init_db(folder_path: &Path) -> rusqlite::Result<Connection> {
         }
         if !has_duration {
             let _ = conn.execute("ALTER TABLE files ADD COLUMN duration REAL DEFAULT 0.0", []);
-            
+
             // Migrate existing files by extracting duration
             let mut stmt = conn.prepare("SELECT id, filepath FROM files")?;
             let file_iter = stmt.query_map([], |row| {
@@ -103,19 +103,19 @@ pub fn init_db(folder_path: &Path) -> rusqlite::Result<Connection> {
         )",
         [],
     )?;
-    
+
     Ok(conn)
 }
 
 pub fn extract_metadata(path: &Path) -> Option<FileItem> {
     let tagged_file = Probe::open(path).ok()?.read().ok()?;
     let properties = tagged_file.properties();
-    
+
     let duration = properties.duration();
     let seconds = duration.as_secs() % 60;
     let minutes = (duration.as_secs() / 60) % 60;
     let length = format!("{}:{:02}", minutes, seconds);
-    
+
     let file_size = std::fs::metadata(path).ok()?.len();
     let size = if file_size < 1024 * 1024 {
         format!("{:.1} KB", file_size as f64 / 1024.0)
@@ -124,8 +124,12 @@ pub fn extract_metadata(path: &Path) -> Option<FileItem> {
     };
 
     let filename = path.file_name()?.to_string_lossy().to_string();
-    let format = path.extension()?.to_string_lossy().to_string().to_uppercase();
-    
+    let format = path
+        .extension()?
+        .to_string_lossy()
+        .to_string()
+        .to_uppercase();
+
     let mut tags = Vec::new();
     if let Some(tag) = tagged_file.primary_tag() {
         if let Some(genre) = tag.genre() {
@@ -153,33 +157,43 @@ pub fn extract_metadata(path: &Path) -> Option<FileItem> {
     })
 }
 
-pub fn update_tags(path: &Path, tags: Vec<String>, id: &str, conn: &Connection) -> Result<(), String> {
+pub fn update_tags(
+    path: &Path,
+    tags: Vec<String>,
+    id: &str,
+    conn: &Connection,
+) -> Result<(), String> {
     let mut tagged_file = Probe::open(path)
         .map_err(|e| e.to_string())?
         .read()
         .map_err(|e| e.to_string())?;
 
     let tag_type = tagged_file.primary_tag_type();
-    
+
     // Get existing primary tag or create a new one of the default type for the format
     if tagged_file.primary_tag().is_none() {
         tagged_file.insert_tag(Tag::new(tag_type));
     }
-    
-    let tag = tagged_file.primary_tag_mut().ok_or("Failed to access tag")?;
+
+    let tag = tagged_file
+        .primary_tag_mut()
+        .ok_or("Failed to access tag")?;
 
     // Join tags with a semicolon and space
     let genre_string = tags.join("; ");
     tag.set_genre(genre_string);
 
-    tagged_file.save_to_path(path, WriteOptions::default()).map_err(|e| e.to_string())?;
+    tagged_file
+        .save_to_path(path, WriteOptions::default())
+        .map_err(|e| e.to_string())?;
 
     // Update database
     let tags_json = serde_json::to_string(&tags).map_err(|e| e.to_string())?;
     conn.execute(
         "UPDATE files SET tags = ?1 WHERE id = ?2",
         params![tags_json, id],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -192,11 +206,7 @@ pub fn scan_folder(folder_path: &Path, conn: &Connection) -> rusqlite::Result<()
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
-        .filter(|e| {
-            !e.file_name()
-                .to_string_lossy()
-                .starts_with('.')
-        })
+        .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
         .collect();
 
     // 2. Filter out files already in DB (this part is still sequential but fast)
@@ -256,19 +266,21 @@ pub fn scan_folder(folder_path: &Path, conn: &Connection) -> rusqlite::Result<()
         )?;
     }
     tx.commit()?;
-    
+
     Ok(())
 }
 
 pub fn get_all_files(folder_path: &Path, conn: &Connection) -> rusqlite::Result<Vec<FileItem>> {
-    let mut stmt = conn.prepare("SELECT id, filename, filepath, format, length, duration, size, tags, gain FROM files")?;
+    let mut stmt = conn.prepare(
+        "SELECT id, filename, filepath, format, length, duration, size, tags, gain FROM files",
+    )?;
     let file_iter = stmt.query_map([], |row| {
         let tags_json: String = row.get(7)?;
         let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
         let relative_path: String = row.get(2)?;
         let full_path = folder_path.join(&relative_path);
         let missing = !full_path.exists();
-        
+
         Ok(FileItem {
             id: row.get(0)?,
             filename: row.get(1)?,
@@ -282,12 +294,12 @@ pub fn get_all_files(folder_path: &Path, conn: &Connection) -> rusqlite::Result<
             missing,
         })
     })?;
-    
+
     let mut files = Vec::new();
     for file in file_iter {
         files.push(file?);
     }
-    
+
     Ok(files)
 }
 
@@ -297,7 +309,11 @@ pub fn remove_file(id: &str, conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-pub fn update_file_path(id: &str, new_relative_path: &str, conn: &Connection) -> rusqlite::Result<()> {
+pub fn update_file_path(
+    id: &str,
+    new_relative_path: &str,
+    conn: &Connection,
+) -> rusqlite::Result<()> {
     conn.execute(
         "UPDATE files SET filepath = ?1 WHERE id = ?2",
         params![new_relative_path, id],
@@ -306,10 +322,10 @@ pub fn update_file_path(id: &str, new_relative_path: &str, conn: &Connection) ->
 }
 
 pub fn trim_and_save(
-    src_path: &Path, 
-    dest_path: &Path, 
-    start_pct: f32, 
-    end_pct: f32
+    src_path: &Path,
+    dest_path: &Path,
+    start_pct: f32,
+    end_pct: f32,
 ) -> Result<(), String> {
     let file = std::fs::File::open(src_path).map_err(|e| e.to_string())?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
@@ -338,17 +354,21 @@ pub fn trim_and_save(
 
     let track_id = track.id;
     let sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
-    let channels = track.codec_params.channels.map(|c| c.count() as u16).unwrap_or(2);
+    let channels = track
+        .codec_params
+        .channels
+        .map(|c| c.count() as u16)
+        .unwrap_or(2);
 
     // Calculate frame ranges
     let total_frames = track.codec_params.n_frames.unwrap_or_else(|| {
         // If n_frames is missing, estimate from duration or just decode all
         0
     });
-    
-    // Better to decode everything if we don't know total_frames, 
+
+    // Better to decode everything if we don't know total_frames,
     // but usually it's available. If not, we'll just use the time-based approach.
-    
+
     let spec = hound::WavSpec {
         channels,
         sample_rate,
@@ -358,9 +378,9 @@ pub fn trim_and_save(
     let mut writer = hound::WavWriter::create(dest_path, spec).map_err(|e| e.to_string())?;
 
     let mut current_frame: u64 = 0;
-    
+
     // Simplified: decode and write if within percentage range of the whole file
-    // To be precise, we should really use symphonia's seek if possible, 
+    // To be precise, we should really use symphonia's seek if possible,
     // but for now, decoding and skipping is safer across all formats.
 
     while let Ok(packet) = format.next_packet() {
@@ -451,7 +471,7 @@ pub fn trim_and_save(
             Err(symphonia::core::errors::Error::DecodeError(_)) => continue,
             Err(_) => break,
         }
-        
+
         // Stop early if we passed the end frame
         let end_frame = (end_pct * total_frames as f32) as u64;
         if end_frame > 0 && current_frame > end_frame {
