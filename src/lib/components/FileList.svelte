@@ -218,10 +218,15 @@
 
 		if (pathsToDrag.length > 0) {
 			const iconPath = await resolveResource('static/tauri.svg');
-			await startDrag({
-				item: pathsToDrag,
-				icon: iconPath
-			});
+			collectionStore.isDraggingFromApp = true;
+			try {
+				await startDrag({
+					item: pathsToDrag,
+					icon: iconPath
+				});
+			} finally {
+				collectionStore.isDraggingFromApp = false;
+			}
 		}
 	}
 

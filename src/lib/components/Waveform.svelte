@@ -4,6 +4,7 @@
 	import { onMount } from 'svelte';
 	import { fade } from 'svelte/transition';
 	import { audioPlayer } from '$lib/audio-player.svelte';
+	import { collectionStore } from '$lib/collection-store.svelte';
 	import { startDrag } from '@crabnebula/tauri-plugin-drag';
 
 	interface Props {
@@ -147,15 +148,20 @@
 		currentPos = null;
 	}
 
-	function handleDragStart(e: DragEvent) {
+	async function handleDragStart(e: DragEvent) {
 		if (!dragClipPath) {
 			e.preventDefault();
 			return;
 		}
-		startDrag({
-			item: [dragClipPath],
-			icon: 'tauri.svg'
-		});
+		collectionStore.isDraggingFromApp = true;
+		try {
+			await startDrag({
+				item: [dragClipPath],
+				icon: 'tauri.svg'
+			});
+		} finally {
+			collectionStore.isDraggingFromApp = false;
+		}
 	}
 
 	function getBarHeight(val: number) {
@@ -244,14 +250,19 @@
 				fill-opacity="0.2"
 				stroke={color}
 				stroke-width="1"
-				onmousedown={(e) => {
+				onmousedown={async (e) => {
 					e.stopPropagation();
 					e.preventDefault();
 					if (dragClipPath) {
-						startDrag({
-							item: [dragClipPath],
-							icon: 'tauri.svg'
-						});
+						collectionStore.isDraggingFromApp = true;
+						try {
+							await startDrag({
+								item: [dragClipPath],
+								icon: 'tauri.svg'
+							});
+						} finally {
+							collectionStore.isDraggingFromApp = false;
+						}
 					}
 				}}
 				class="selection-rect"

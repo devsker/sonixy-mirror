@@ -32,9 +32,22 @@
 	
 	onMount(() => {
 		const unlistenPromise = appWindow.onDragDropEvent((event) => {
+			if (collectionStore.isDraggingFromApp) return;
+
 			if (event.payload.type === 'drop' && collectionStore.collectionPath) {
-				dropPaths = event.payload.paths;
-				showDropPrompt = true;
+				const collectionPath = collectionStore.collectionPath.replace(/[\\\/]+/g, '/');
+				const filteredPaths = event.payload.paths.filter(path => {
+					const normalizedPath = path.replace(/[\\\/]+/g, '/');
+					// If it's the exact collection folder or inside it, ignore
+					if (normalizedPath === collectionPath) return false;
+					if (normalizedPath.startsWith(collectionPath.endsWith('/') ? collectionPath : collectionPath + '/')) return false;
+					return true;
+				});
+
+				if (filteredPaths.length > 0) {
+					dropPaths = filteredPaths;
+					showDropPrompt = true;
+				}
 			}
 		});
 

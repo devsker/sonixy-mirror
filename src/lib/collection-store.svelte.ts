@@ -36,6 +36,7 @@ class CollectionStore {
     tasks = $state<Task[]>([]);
     processingFiles = $state<Set<string>>(new Set());
     currentlyProcessingIds = $state<Set<string>>(new Set());
+    isDraggingFromApp = $state(false);
 
     // Filter & Sort State
     sortColumn = $state<string | null>(null);
