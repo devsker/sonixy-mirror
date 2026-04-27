@@ -5,6 +5,7 @@
 	import { onMount, setContext } from 'svelte';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import DropPrompt from '$lib/components/DropPrompt.svelte';
+	import ContextMenu from '$lib/components/ContextMenu.svelte';
 	import { collectionStore } from '$lib/collection-store.svelte';
 	import { audioPlayer } from '$lib/audio-player.svelte';
 	
@@ -112,7 +113,11 @@
 	setContext('settings-context', settingsStore);
 </script>
 
-<svelte:window onkeydown={handleKeydown} onclick={closeDropPrompt} />
+<svelte:window 
+	onkeydown={handleKeydown} 
+	onclick={closeDropPrompt} 
+	oncontextmenu={(e) => e.preventDefault()}
+/>
 
 <div class="app-container">
 	<Titlebar />
@@ -154,6 +159,8 @@
 			onCancel={handleDropCancel} 
 		/>
 	{/if}
+
+	<ContextMenu />
 </div>
 
 <style>

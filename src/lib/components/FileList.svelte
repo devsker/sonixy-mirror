@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
 	import { ChevronUp, ChevronDown, Filter, FolderOpen, Loader2, AlertTriangle, Trash2, Search, Circle, Tag, Plus, X } from 'lucide-svelte';
-	import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu';
+	import { showContextMenu } from '$lib/context-menu.svelte';
 	import { revealItemInDir } from '@tauri-apps/plugin-opener';
 	import { ask, message } from '@tauri-apps/plugin-dialog';
 	import { resolveResource } from '@tauri-apps/api/path';
@@ -98,65 +98,62 @@
 		}
 	}
 
-	async function handleContextMenu(event: MouseEvent, file: FileItem) {
+	function handleContextMenu(event: MouseEvent, file: FileItem) {
 		event.preventDefault();
+		event.stopPropagation();
 
 		if (!file.selected) {
 			files.forEach((f) => (f.selected = false));
 			file.selected = true;
 		}
 
-		const menu = await Menu.new({
-			items: [
-				await MenuItem.new({
-					text: audioPlayer.currentFileId === file.id && audioPlayer.isPlaying ? 'Pause' : 'Play',
-					enabled: !file.missing,
-					action: () => audioPlayer.toggle(file)
-				}),
-				await PredefinedMenuItem.new({ item: 'Separator' }),
-				await MenuItem.new({
-					text: 'Add Tag...',
-					enabled: !file.missing,
-					action: () => {
-						taggingFile = file;
-						newTagValue = '';
-					}
-				}),
-				await PredefinedMenuItem.new({ item: 'Separator' }),
-				await MenuItem.new({
-					text: 'Show in Folder',
-					enabled: !file.missing,
-					action: async () => {
-						const fullPath = `${collectionPath}/${file.filepath}`.replace(/[\\\/]+/g, '/');
-						await revealItemInDir(fullPath);
-					}
-				}),
-				await MenuItem.new({
-					text: 'Copy Path',
-					action: async () => {
-						const fullPath = `${collectionPath}/${file.filepath}`.replace(/[\\\/]+/g, '/');
-						await navigator.clipboard.writeText(fullPath);
-					}
-				}),
-				await PredefinedMenuItem.new({ item: 'Separator' }),
-				...(file.missing
-					? [
-							await MenuItem.new({
-								text: 'Locate File...',
-								action: () => collectionStore.relocateFile(file.id)
-							})
-						]
-					: []),
-				await MenuItem.new({
-					text: 'Remove',
-					action: () => {
-						fileToRemove = file;
-					}
-				})
-			]
-		});
-
-		await menu.popup();
+		showContextMenu(event.clientX, event.clientY, [
+			{
+				label: audioPlayer.currentFileId === file.id && audioPlayer.isPlaying ? 'Pause' : 'Play',
+				disabled: file.missing,
+				action: () => audioPlayer.toggle(file)
+			},
+			{ separator: true },
+			{
+				label: 'Add Tag...',
+				disabled: file.missing,
+				action: () => {
+					taggingFile = file;
+					newTagValue = '';
+				}
+			},
+			{ separator: true },
+			{
+				label: 'Show in Folder',
+				disabled: file.missing,
+				action: async () => {
+					const fullPath = `${collectionPath}/${file.filepath}`.replace(/[\\\/]+/g, '/');
+					await revealItemInDir(fullPath);
+				}
+			},
+			{
+				label: 'Copy Path',
+				action: async () => {
+					const fullPath = `${collectionPath}/${file.filepath}`.replace(/[\\\/]+/g, '/');
+					await navigator.clipboard.writeText(fullPath);
+				}
+			},
+			{ separator: true },
+			...(file.missing
+				? [
+						{
+							label: 'Locate File...',
+							action: () => collectionStore.relocateFile(file.id)
+						}
+					]
+				: []),
+			{
+				label: 'Remove',
+				action: () => {
+					fileToRemove = file;
+				}
+			}
+		]);
 	}
 
 	// Column definitions
@@ -354,7 +351,19 @@
 	</div>
 {/if}
 
-<div class="file-list-container">
+<div 
+	class="file-list-container"
+	oncontextmenu={(e) => {
+		if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('empty-state')) {
+			e.preventDefault();
+			showContextMenu(e.clientX, e.clientY, [
+				{ label: 'Open Collection...', action: () => collectionStore.openCollection() },
+				{ separator: true },
+				{ label: 'Refresh', action: () => collectionStore.refresh() }
+			]);
+		}
+	}}
+>
 	{#if !collectionPath}
 		<div class="empty-state">
 			<FolderOpen size={48} />
