@@ -583,8 +583,14 @@
 													autofocus
 													size="1"
 													onkeydown={(e) => {
-														if (e.key === 'Enter') handleAddTag();
-														if (e.key === 'Escape') closeTagDialog();
+														if (e.key === 'Enter') {
+															e.stopPropagation();
+															handleAddTag();
+														}
+														if (e.key === 'Escape') {
+															e.stopPropagation();
+															closeTagDialog();
+														}
 													}}
 													onblur={() => {
 														setTimeout(closeTagDialog, 100);

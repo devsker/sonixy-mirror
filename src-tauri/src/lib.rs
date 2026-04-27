@@ -5,7 +5,7 @@ use rayon::prelude::*;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
 use std::collections::VecDeque;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Cursor, Read};
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -355,8 +355,11 @@ fn play_audio(path: String, gain: f32, state: State<'_, AppState>) -> Result<(),
         PathBuf::from(path)
     };
 
-    let file = File::open(full_path).map_err(|e| e.to_string())?;
-    let source = Decoder::new(BufReader::new(file)).map_err(|e| e.to_string())?;
+    let mut file = File::open(full_path).map_err(|e| e.to_string())?;
+    let mut data = Vec::new();
+    file.read_to_end(&mut data).map_err(|e| e.to_string())?;
+    
+    let source = Decoder::new(Cursor::new(data)).map_err(|e| e.to_string())?;
 
     state.audio.suppress_ended.store(true, Ordering::SeqCst);
     let sink = state
@@ -554,7 +557,7 @@ async fn update_file_tags(
     id: String,
     tags: Vec<String>,
     state: State<'_, AppState>,
-) -> Result<Vec<FileItem>, String> {
+) -> Result<FileItem, String> {
     let state_path = state
         .collection_path
         .lock()
@@ -570,15 +573,35 @@ async fn update_file_tags(
         .query_row([&id], |row| row.get(0))
         .map_err(|e| e.to_string())?;
 
-    let full_path = folder_path.join(relative_path);
+    let full_path = folder_path.join(&relative_path);
     if !full_path.exists() {
         return Err("File does not exist".to_string());
     }
 
     collection::update_tags(&full_path, tags, &id, &conn)?;
 
-    let files = collection::get_all_files(folder_path, &conn).map_err(|e| e.to_string())?;
-    Ok(files)
+    let mut stmt = conn.prepare(
+        "SELECT id, filename, filepath, format, length, duration, size, tags, gain FROM files WHERE id = ?1",
+    ).map_err(|e| e.to_string())?;
+
+    let item = stmt.query_row([&id], |row| {
+        let tags_json: String = row.get(7)?;
+        let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+        Ok(FileItem {
+            id: row.get(0)?,
+            filename: row.get(1)?,
+            filepath: relative_path,
+            format: row.get(3)?,
+            length: row.get(4)?,
+            duration: row.get(5)?,
+            size: row.get(6)?,
+            tags,
+            gain: row.get(8)?,
+            missing: false,
+        })
+    }).map_err(|e| e.to_string())?;
+
+    Ok(item)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

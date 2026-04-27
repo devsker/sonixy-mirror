@@ -455,14 +455,16 @@ class CollectionStore {
 
     async updateTags(id: string, tags: string[]) {
         try {
-            this.loading = true;
-            const result = await invoke<Omit<FileItem, 'selected'>[]>('update_file_tags', { id, tags });
-            this.files = result.map(f => ({ ...f, selected: false }));
+            const updatedItem = await invoke<Omit<FileItem, 'selected'>>('update_file_tags', { id, tags });
+            const index = this.files.findIndex(f => f.id === id);
+            if (index !== -1) {
+                // Keep the selection state
+                const selected = this.files[index].selected;
+                this.files[index] = { ...updatedItem, selected };
+            }
         } catch (e) {
             console.error('Failed to update tags', e);
             throw e;
-        } finally {
-            this.loading = false;
         }
     }
 }
