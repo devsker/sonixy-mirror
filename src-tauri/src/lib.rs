@@ -317,7 +317,7 @@ async fn add_files_to_collection(
 }
 
 #[tauri::command]
-fn regenerate_waveforms(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+fn regenerate_waveforms(normalize: bool, state: State<'_, AppState>) -> Result<Vec<String>, String> {
     let state_path = state
         .collection_path
         .lock()
@@ -339,7 +339,7 @@ fn regenerate_waveforms(state: State<'_, AppState>) -> Result<Vec<String>, Strin
     }
 
     let missing_ids =
-        queue_missing_waveforms(folder_path, &state.waveform_queue, false).unwrap_or_default();
+        queue_missing_waveforms(folder_path, &state.waveform_queue, normalize).unwrap_or_default();
     Ok(missing_ids)
 }
 
@@ -680,30 +680,40 @@ pub fn run() {
                         if let Some(folder_path) = folder_path {
                             let full_path = folder_path.join(&task.relative_path);
 
+                            // Perform destructive normalization if requested
+                            if task.normalize {
+                                let _ = handle.emit("waveform-started", format!("{}-normalizing", task.id));
+                                if let Err(e) = collection::normalize_file_destructive(&full_path) {
+                                    eprintln!("Destructive normalization failed for {}: {}", task.id, e);
+                                }
+                            }
+
                             // Emit started event
                             let _ = handle.emit("waveform-started", task.id.clone());
 
-                            if let Some((waveform, peak)) = collection::generate_waveform(&full_path) {
+                            if let Some((waveform, peak, rms)) = collection::generate_waveform(&full_path) {
                                 if let Ok(conn) = collection::init_db(&folder_path) {
                                     let _ = conn.execute(
                                         "INSERT OR REPLACE INTO waveforms (id, data) VALUES (?1, ?2)",
                                         rusqlite::params![task.id, waveform],
                                     );
 
-                                    let mut final_gain = 1.0;
+                                    // Since it's destructive normalization, the file is already at the target level.
+                                    // We set gain to 1.0 in the DB because we don't need additional playback gain.
+                                    // However, we still might want to re-extract metadata (size, duration might change slightly)
                                     if task.normalize {
-                                        // Peak normalization to 0.7 to allow some headroom
-                                        final_gain = if peak > 0.0 { 0.3 / peak } else { 1.0 };
-                                        let _ = conn.execute(
-                                            "UPDATE files SET gain = ?1 WHERE id = ?2",
-                                            rusqlite::params![final_gain, task.id],
-                                        );
+                                        if let Some(meta) = collection::extract_metadata(&full_path) {
+                                             let _ = conn.execute(
+                                                "UPDATE files SET size = ?1, duration = ?2, length = ?3, gain = 1.0 WHERE id = ?4",
+                                                rusqlite::params![meta.size, meta.duration, meta.length, task.id],
+                                            );
+                                        }
                                     }
 
-                                    // Emit event with gain
+                                    // Emit event
                                     let _ = handle.emit("waveform-generated", serde_json::json!({
                                         "id": task.id,
-                                        "gain": final_gain
+                                        "gain": 1.0
                                     }));
                                 }
                             }

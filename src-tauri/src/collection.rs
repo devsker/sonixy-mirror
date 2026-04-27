@@ -321,6 +321,35 @@ pub fn update_file_path(
     Ok(())
 }
 
+use std::process::Command;
+
+pub fn normalize_file_destructive(path: &Path) -> Result<(), String> {
+    let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("wav");
+    let mut temp_path = path.to_path_buf();
+    temp_path.set_extension(format!("normalized.{}", extension));
+    
+    // Use ffmpeg's loudnorm filter for EBU R128 normalization
+    let output = Command::new("ffmpeg")
+        .arg("-i")
+        .arg(path)
+        .arg("-af")
+        .arg("loudnorm=I=-16:TP=-1.5:LRA=11") // Target -16 LUFS, -1.5dB TP
+        .arg("-y") // Overwrite temp if exists
+        .arg(&temp_path)
+        .output()
+        .map_err(|e| format!("Failed to execute ffmpeg: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("ffmpeg error: {}", stderr));
+    }
+
+    // Replace original file with normalized one
+    std::fs::rename(&temp_path, path).map_err(|e| format!("Failed to replace original file: {}", e))?;
+
+    Ok(())
+}
+
 pub fn trim_and_save(
     src_path: &Path,
     dest_path: &Path,
@@ -483,7 +512,7 @@ pub fn trim_and_save(
     Ok(())
 }
 
-pub fn generate_waveform(path: &Path) -> Option<(Vec<u8>, f32)> {
+pub fn generate_waveform(path: &Path) -> Option<(Vec<u8>, f32, f32)> {
     let file = std::fs::File::open(path).ok()?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();
@@ -511,6 +540,8 @@ pub fn generate_waveform(path: &Path) -> Option<(Vec<u8>, f32)> {
     let track_id = track.id;
     let mut samples = Vec::new();
     let mut peak = 0.0f32;
+    let mut sum_sq = 0.0f64;
+    let mut count = 0u64;
 
     while let Ok(packet) = format.next_packet() {
         if packet.track_id() != track_id {
@@ -525,6 +556,8 @@ pub fn generate_waveform(path: &Path) -> Option<(Vec<u8>, f32)> {
                         let val = plane[i].abs();
                         max = max.max(val);
                         peak = peak.max(val);
+                        sum_sq += (val as f64).powi(2);
+                        count += 1;
                     }
                     samples.push(max);
                 }
@@ -537,6 +570,8 @@ pub fn generate_waveform(path: &Path) -> Option<(Vec<u8>, f32)> {
                         let val = sample.abs();
                         max = max.max(val);
                         peak = peak.max(val);
+                        sum_sq += (val as f64).powi(2);
+                        count += 1;
                     }
                     samples.push(max);
                 }
@@ -549,6 +584,8 @@ pub fn generate_waveform(path: &Path) -> Option<(Vec<u8>, f32)> {
                         let val = sample.abs();
                         max = max.max(val);
                         peak = peak.max(val);
+                        sum_sq += (val as f64).powi(2);
+                        count += 1;
                     }
                     samples.push(max);
                 }
@@ -557,11 +594,12 @@ pub fn generate_waveform(path: &Path) -> Option<(Vec<u8>, f32)> {
                 for i in 0..buf.frames() {
                     let mut max = 0.0f32;
                     for plane in buf.planes().planes() {
-                        // symphonia::core::sample::i24 is a tuple struct with .0 as i32
                         let sample = plane[i].0 as f32 / 8388608.0;
                         let val = sample.abs();
                         max = max.max(val);
                         peak = peak.max(val);
+                        sum_sq += (val as f64).powi(2);
+                        count += 1;
                     }
                     samples.push(max);
                 }
@@ -574,6 +612,8 @@ pub fn generate_waveform(path: &Path) -> Option<(Vec<u8>, f32)> {
                         let val = sample.abs();
                         max = max.max(val);
                         peak = peak.max(val);
+                        sum_sq += (val as f64).powi(2);
+                        count += 1;
                     }
                     samples.push(max);
                 }
@@ -588,6 +628,12 @@ pub fn generate_waveform(path: &Path) -> Option<(Vec<u8>, f32)> {
     if samples.is_empty() {
         return None;
     }
+
+    let rms = if count > 0 {
+        (sum_sq / count as f64).sqrt() as f32
+    } else {
+        0.0
+    };
 
     let bars = 256;
     let chunk_size = samples.len() / bars;
@@ -608,5 +654,6 @@ pub fn generate_waveform(path: &Path) -> Option<(Vec<u8>, f32)> {
         result.push((max * 255.0).min(255.0) as u8);
     }
 
-    Some((result, peak))
+    Some((result, peak, rms))
 }
+

@@ -433,7 +433,9 @@ class CollectionStore {
             // Remove existing task if any
             this.removeTask('waveforms');
             
-            const missingWaveforms = await invoke<string[]>('regenerate_waveforms');
+            const missingWaveforms = await invoke<string[]>('regenerate_waveforms', { 
+                normalize: settingsStore.normalizeOnImport 
+            });
             
             if (missingWaveforms.length > 0) {
                 this.processingFiles = new Set(missingWaveforms);

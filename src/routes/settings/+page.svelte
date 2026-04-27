@@ -106,7 +106,7 @@
 					</label>
 					<label for="normalizeOnImport" class="checkbox-label">Normalize on Import</label>
 				</div>
-				<p class="description">Automatically normalize audio files when adding them to the collection. This is a non-destructive process that calculates the peak volume for playback.</p>
+				<p class="description">Actually process and normalize audio files to target a consistent volume level (EBU R128). <strong>Warning: This is a destructive process that overwrites the original file on disk.</strong></p>
 			</div>
 
 			<div class="setting-item">
