@@ -25,6 +25,7 @@
 	let collectionPath = $derived(collectionStore.collectionPath);
 	let processingFiles = $derived(collectionStore.processingFiles);
 	let currentlyProcessingIds = $derived(collectionStore.currentlyProcessingIds);
+	let waveformProgress = $derived(collectionStore.waveformProgress);
 
 	let selectedIds = $derived(files.filter((f) => f.selected).map((f) => f.id));
 
@@ -524,7 +525,18 @@
 									{#if processingFiles.has(file.id)}
 										<span class="processing-icon" class:queued={!currentlyProcessingIds.has(file.id)} title={currentlyProcessingIds.has(file.id) ? "Processing..." : "Queued"}>
 											{#if currentlyProcessingIds.has(file.id)}
-												<Loader2 size={14} class="animate-spin" />
+												{@const progress = waveformProgress[file.id] || 0}
+												<svg class="progress-circle" viewBox="0 0 16 16">
+													<circle class="bg" cx="8" cy="8" r="6" />
+													<circle 
+														class="fg" 
+														cx="8" 
+														cy="8" 
+														r="6" 
+														stroke-dasharray={2 * Math.PI * 6} 
+														stroke-dashoffset={2 * Math.PI * 6 * (1 - progress)} 
+													/>
+												</svg>
 											{:else}
 												<Circle size={10} strokeWidth={3} />
 											{/if}
@@ -814,6 +826,28 @@
 	.processing-icon.queued {
 		color: var(--text-muted);
 		opacity: 0.5;
+	}
+
+	.progress-circle {
+		width: 14px;
+		height: 14px;
+		transform: rotate(-90deg);
+	}
+
+	.progress-circle circle {
+		fill: none;
+		stroke-width: 2.5;
+	}
+
+	.progress-circle .bg {
+		stroke: var(--border-color);
+		opacity: 0.3;
+	}
+
+	.progress-circle .fg {
+		stroke: currentColor;
+		stroke-linecap: round;
+		transition: stroke-dashoffset 0.1s ease;
 	}
 
 	.missing-actions {

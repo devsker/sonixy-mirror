@@ -5,7 +5,7 @@ use rayon::prelude::*;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
 use std::collections::VecDeque;
 use std::fs::File;
-use std::io::{BufReader, Cursor, Read};
+use std::io::{Cursor, Read};
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -15,6 +15,12 @@ struct WaveformTask {
     id: String,
     relative_path: String,
     normalize: bool,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct WaveformProgress {
+    id: String,
+    progress: f32,
 }
 
 struct WaveformQueue {
@@ -693,7 +699,14 @@ pub fn run() {
                             // Emit started event
                             let _ = handle.emit("waveform-started", task.id.clone());
 
-                            if let Some((waveform, peak, rms)) = collection::generate_waveform(&full_path) {
+                            let task_id = task.id.clone();
+                            let handle_clone = handle.clone();
+                            if let Some((waveform, _peak, _rms)) = collection::generate_waveform(&full_path, move |progress| {
+                                let _ = handle_clone.emit("waveform-progress", WaveformProgress {
+                                    id: task_id.clone(),
+                                    progress,
+                                });
+                            }) {
                                 if let Ok(conn) = collection::init_db(&folder_path) {
                                     let _ = conn.execute(
                                         "INSERT OR REPLACE INTO waveforms (id, data) VALUES (?1, ?2)",

@@ -18,6 +18,7 @@
 	let waveformData = $state<number[] | null>(null);
 	let isLoading = $state(true);
 	let svgElement = $state<SVGSVGElement | null>(null);
+	let progress = $derived(collectionStore.waveformProgress[id] || 0);
 
 	// Selection state
 	let selectionStart = $state<number | null>(null);
@@ -60,14 +61,23 @@
 	});
 
 	onMount(() => {
-		const unlisten = listen<any>('waveform-generated', (event) => {
+		const unlistenStarted = listen<string>('waveform-started', (event) => {
+			if (event.payload === id) {
+				waveformData = null;
+				isLoading = true;
+			}
+		});
+
+		const unlistenGenerated = listen<any>('waveform-generated', (event) => {
 			const payloadId = typeof event.payload === 'string' ? event.payload : event.payload?.id;
 			if (payloadId === id) {
 				fetchWaveform();
 			}
 		});
+
 		return () => {
-			unlisten.then((f) => f());
+			unlistenStarted.then((f) => f());
+			unlistenGenerated.then((f) => f());
 		};
 	});
 
@@ -286,8 +296,11 @@
 
 	{#if isLoading && !waveformData}
 		<div class="loading-overlay" transition:fade={{ duration: 200 }}>
-			<div class="loading-placeholder">
-				<div class="loading-bar"></div>
+			<div class="loading-content">
+				<div class="loading-placeholder">
+					<div class="loading-bar" style="width: {progress * 100}%"></div>
+				</div>
+				<span class="progress-text">{Math.round(progress * 100)}%</span>
 			</div>
 		</div>
 	{/if}
@@ -353,8 +366,17 @@
 		left: 16px;
 		right: 16px;
 		display: flex;
+		flex-direction: column;
 		align-items: center;
 		pointer-events: none;
+	}
+
+	.loading-content {
+		width: 100%;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 8px;
 	}
 
 	.loading-placeholder {
@@ -369,18 +391,16 @@
 
 	.loading-bar {
 		position: absolute;
-		width: 30%;
+		left: 0;
 		height: 100%;
 		background-color: var(--icon-active);
-		animation: loading 1.5s infinite ease-in-out;
+		transition: width 0.1s ease-out;
 	}
 
-	@keyframes loading {
-		0% {
-			left: -30%;
-		}
-		100% {
-			left: 100%;
-		}
+	.progress-text {
+		font-size: 10px;
+		font-weight: 600;
+		color: var(--text-muted);
+		font-variant-numeric: tabular-nums;
 	}
 </style>

@@ -394,7 +394,10 @@ pub fn trim_and_save(
     Ok(())
 }
 
-pub fn generate_waveform(path: &Path) -> Option<(Vec<u8>, f32, f32)> {
+pub fn generate_waveform<F>(path: &Path, on_progress: F) -> Option<(Vec<u8>, f32, f32)>
+where
+    F: Fn(f32),
+{
     let file = std::fs::File::open(path).ok()?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();
@@ -414,6 +417,9 @@ pub fn generate_waveform(path: &Path) -> Option<(Vec<u8>, f32, f32)> {
         .iter()
         .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)?;
 
+    let total_frames = track.codec_params.n_frames;
+    let mut decoded_frames = 0u64;
+
     let dec_opts = DecoderOptions::default();
     let mut decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &dec_opts)
@@ -425,82 +431,100 @@ pub fn generate_waveform(path: &Path) -> Option<(Vec<u8>, f32, f32)> {
     let mut sum_sq = 0.0f64;
     let mut count = 0u64;
 
+    let mut last_progress = -1.0f32;
+
     while let Ok(packet) = format.next_packet() {
         if packet.track_id() != track_id {
             continue;
         }
 
         match decoder.decode(&packet) {
-            Ok(AudioBufferRef::F32(buf)) => {
-                for i in 0..buf.frames() {
-                    let mut max = 0.0f32;
-                    for plane in buf.planes().planes() {
-                        let val = plane[i].abs();
-                        max = max.max(val);
-                        peak = peak.max(val);
-                        sum_sq += (val as f64).powi(2);
-                        count += 1;
+            Ok(buf_ref) => {
+                let frames = buf_ref.frames();
+                decoded_frames += frames as u64;
+
+                if let Some(total) = total_frames {
+                    let progress = (decoded_frames as f32 / total as f32).min(1.0);
+                    // Report progress every 1% change to avoid flooding
+                    if (progress - last_progress).abs() >= 0.01 {
+                        on_progress(progress);
+                        last_progress = progress;
                     }
-                    samples.push(max);
+                }
+
+                match buf_ref {
+                    AudioBufferRef::F32(buf) => {
+                        for i in 0..buf.frames() {
+                            let mut max = 0.0f32;
+                            for plane in buf.planes().planes() {
+                                let val = plane[i].abs();
+                                max = max.max(val);
+                                peak = peak.max(val);
+                                sum_sq += (val as f64).powi(2);
+                                count += 1;
+                            }
+                            samples.push(max);
+                        }
+                    }
+                    AudioBufferRef::U8(buf) => {
+                        for i in 0..buf.frames() {
+                            let mut max = 0.0f32;
+                            for plane in buf.planes().planes() {
+                                let sample = (plane[i] as f32 - 128.0) / 128.0;
+                                let val = sample.abs();
+                                max = max.max(val);
+                                peak = peak.max(val);
+                                sum_sq += (val as f64).powi(2);
+                                count += 1;
+                            }
+                            samples.push(max);
+                        }
+                    }
+                    AudioBufferRef::S16(buf) => {
+                        for i in 0..buf.frames() {
+                            let mut max = 0.0f32;
+                            for plane in buf.planes().planes() {
+                                let sample = plane[i] as f32 / 32768.0;
+                                let val = sample.abs();
+                                max = max.max(val);
+                                peak = peak.max(val);
+                                sum_sq += (val as f64).powi(2);
+                                count += 1;
+                            }
+                            samples.push(max);
+                        }
+                    }
+                    AudioBufferRef::S24(buf) => {
+                        for i in 0..buf.frames() {
+                            let mut max = 0.0f32;
+                            for plane in buf.planes().planes() {
+                                let sample = plane[i].0 as f32 / 8388608.0;
+                                let val = sample.abs();
+                                max = max.max(val);
+                                peak = peak.max(val);
+                                sum_sq += (val as f64).powi(2);
+                                count += 1;
+                            }
+                            samples.push(max);
+                        }
+                    }
+                    AudioBufferRef::S32(buf) => {
+                        for i in 0..buf.frames() {
+                            let mut max = 0.0f32;
+                            for plane in buf.planes().planes() {
+                                let sample = plane[i] as f32 / 2147483648.0;
+                                let val = sample.abs();
+                                max = max.max(val);
+                                peak = peak.max(val);
+                                sum_sq += (val as f64).powi(2);
+                                count += 1;
+                            }
+                            samples.push(max);
+                        }
+                    }
+                    _ => {}
                 }
             }
-            Ok(AudioBufferRef::U8(buf)) => {
-                for i in 0..buf.frames() {
-                    let mut max = 0.0f32;
-                    for plane in buf.planes().planes() {
-                        let sample = (plane[i] as f32 - 128.0) / 128.0;
-                        let val = sample.abs();
-                        max = max.max(val);
-                        peak = peak.max(val);
-                        sum_sq += (val as f64).powi(2);
-                        count += 1;
-                    }
-                    samples.push(max);
-                }
-            }
-            Ok(AudioBufferRef::S16(buf)) => {
-                for i in 0..buf.frames() {
-                    let mut max = 0.0f32;
-                    for plane in buf.planes().planes() {
-                        let sample = plane[i] as f32 / 32768.0;
-                        let val = sample.abs();
-                        max = max.max(val);
-                        peak = peak.max(val);
-                        sum_sq += (val as f64).powi(2);
-                        count += 1;
-                    }
-                    samples.push(max);
-                }
-            }
-            Ok(AudioBufferRef::S24(buf)) => {
-                for i in 0..buf.frames() {
-                    let mut max = 0.0f32;
-                    for plane in buf.planes().planes() {
-                        let sample = plane[i].0 as f32 / 8388608.0;
-                        let val = sample.abs();
-                        max = max.max(val);
-                        peak = peak.max(val);
-                        sum_sq += (val as f64).powi(2);
-                        count += 1;
-                    }
-                    samples.push(max);
-                }
-            }
-            Ok(AudioBufferRef::S32(buf)) => {
-                for i in 0..buf.frames() {
-                    let mut max = 0.0f32;
-                    for plane in buf.planes().planes() {
-                        let sample = plane[i] as f32 / 2147483648.0;
-                        let val = sample.abs();
-                        max = max.max(val);
-                        peak = peak.max(val);
-                        sum_sq += (val as f64).powi(2);
-                        count += 1;
-                    }
-                    samples.push(max);
-                }
-            }
-            Ok(_) => {}
             Err(symphonia::core::errors::Error::IoError(_)) => break,
             Err(symphonia::core::errors::Error::DecodeError(_)) => continue,
             Err(_) => break,

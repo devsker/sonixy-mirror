@@ -10,14 +10,16 @@
     let tasks = $derived(collectionStore.tasks);
     let showTasks = $state(false);
 
-    let activeTasksCount = $derived(tasks.filter(t => t.status === 'running' || t.status === 'pending').length);
+    let activeTasks = $derived(tasks.filter(t => t.status === 'running' || t.status === 'pending'));
+    let activeTasksCount = $derived(activeTasks.length);
     let overallProgress = $derived(
-        tasks.length > 0 
-            ? tasks.reduce((acc, t) => acc + t.progress, 0) / tasks.length 
-            : 0
+        activeTasksCount > 0 
+            ? activeTasks.reduce((acc, t) => acc + t.progress, 0) / activeTasksCount 
+            : tasks.length > 0 ? 100 : 0
     );
 
     let isPlaying = $derived(audioPlayer.isPlaying);
+
     let isWaitingToReplay = $derived(audioPlayer.isWaitingToReplay);
     let replayProgress = $derived(audioPlayer.replayProgress);
     let volume = $derived(audioPlayer.volume);
@@ -156,7 +158,7 @@
                             stroke-dasharray="44" 
                             stroke-dashoffset={44 - (44 * overallProgress / 100)}
                             stroke-linecap="round"
-                            transform="rotate(-90 9) "
+                            transform="rotate(-90 9 9)"
                         />
                     </svg>
                 </button>
@@ -379,6 +381,11 @@
     .task-btn {
         position: relative;
         color: var(--text-muted);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0 8px;
+        width: auto;
     }
 
     .task-btn.active {

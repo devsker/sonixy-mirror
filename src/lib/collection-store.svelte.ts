@@ -3,6 +3,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import { remove } from '@tauri-apps/plugin-fs';
 import { audioPlayer } from './audio-player.svelte';
+import { settingsStore } from './settings-store.svelte';
 
 export interface FileItem {
     id: string;
@@ -26,6 +27,8 @@ export interface Task {
     message?: string;
     total?: number;
     completed?: number;
+    startTime?: number;
+    eta?: string;
 }
 
 class CollectionStore {
@@ -36,6 +39,7 @@ class CollectionStore {
     tasks = $state<Task[]>([]);
     processingFiles = $state<Set<string>>(new Set());
     currentlyProcessingIds = $state<Set<string>>(new Set());
+    waveformProgress = $state<Record<string, number>>({});
     isDraggingFromApp = $state(false);
 
     // Filter & Sort State
@@ -122,6 +126,13 @@ class CollectionStore {
                 this.currentlyProcessingIds = new Set(this.currentlyProcessingIds);
             });
 
+            // Listen for waveform progress
+            listen('waveform-progress', (event) => {
+                const payload = event.payload as { id: string, progress: number };
+                this.waveformProgress[payload.id] = payload.progress;
+                this.updateWaveformTaskProgress();
+            });
+
             // Listen for waveform generation
             listen('waveform-generated', (event) => {
                 const payload = event.payload as { id: string, gain: number };
@@ -139,18 +150,65 @@ class CollectionStore {
 
                 this.currentlyProcessingIds.delete(id);
                 this.currentlyProcessingIds = new Set(this.currentlyProcessingIds);
+                delete this.waveformProgress[id];
 
                 const task = this.tasks.find(t => t.id === 'waveforms');
                 if (task && task.total !== undefined && task.completed !== undefined) {
                     task.completed++;
-                    task.progress = (task.completed / task.total) * 100;
-                    task.message = `${task.completed} / ${task.total} waveforms`;
+                    this.updateWaveformTaskProgress();
                     if (task.completed >= task.total) {
-                        this.updateTask(task.id, { status: 'completed' });
+                        this.updateTask(task.id, { status: 'completed', eta: undefined });
                     }
                 }
             });
         }
+    }
+
+    private updateWaveformTaskProgress() {
+        const task = this.tasks.find(t => t.id === 'waveforms');
+        if (!task || task.total === undefined || task.completed === undefined) return;
+
+        const currentFilesProgress = Object.values(this.waveformProgress).reduce((acc, p) => acc + p, 0);
+        const accurateCompleted = task.completed + currentFilesProgress;
+        task.progress = (accurateCompleted / task.total) * 100;
+        
+        let etaMessage = '';
+        if (task.startTime && accurateCompleted > 0) {
+            const elapsed = (Date.now() - task.startTime) / 1000;
+            const itemsPerSecond = accurateCompleted / elapsed;
+            const remainingItems = task.total - accurateCompleted;
+            const remainingSeconds = remainingItems / itemsPerSecond;
+            
+            if (remainingSeconds > 0) {
+                // Smooth the ETA using exponential moving average
+                // We use task.progress as a proxy for how much weight to give the current estimate if we wanted,
+                // but a simple alpha is usually better.
+                let smoothedSeconds = remainingSeconds;
+                if (task.eta) {
+                    // Extract existing numeric value if possible
+                    const match = task.message?.match(/(\d+)m\s*(\d+)s|(\d+)s/);
+                    if (match) {
+                        let prevSeconds = 0;
+                        if (match[3]) prevSeconds = parseInt(match[3]);
+                        else prevSeconds = parseInt(match[1]) * 60 + parseInt(match[2]);
+                        
+                        // Alpha of 0.05 for high smoothing
+                        smoothedSeconds = prevSeconds * 0.95 + remainingSeconds * 0.05;
+                    }
+                }
+
+                if (smoothedSeconds < 60) {
+                    etaMessage = ` - ${Math.round(smoothedSeconds)}s remaining`;
+                } else {
+                    const mins = Math.floor(smoothedSeconds / 60);
+                    const secs = Math.round(smoothedSeconds % 60);
+                    etaMessage = ` - ${mins}m ${secs}s remaining`;
+                }
+                task.eta = etaMessage;
+            }
+        }
+        
+        task.message = `${task.completed} / ${task.total} waveforms${etaMessage}`;
     }
 
     addTask(task: Task) {
@@ -199,6 +257,7 @@ class CollectionStore {
                     status: 'running',
                     total: missingWaveforms.length,
                     completed: 0,
+                    startTime: Date.now(),
                     message: `0 / ${missingWaveforms.length} waveforms`
                 });
             }
@@ -269,8 +328,8 @@ class CollectionStore {
                     task.total = (task.total || 0) + missingWaveforms.length;
                     task.completed = (task.completed || 0);
                     task.status = 'running';
-                    task.message = `${task.completed} / ${task.total} waveforms`;
-                    task.progress = (task.completed / task.total) * 100;
+                    if (!task.startTime) task.startTime = Date.now();
+                    this.updateWaveformTaskProgress();
                 } else {
                     this.addTask({
                         id: 'waveforms',
@@ -279,6 +338,7 @@ class CollectionStore {
                         status: 'running',
                         total: missingWaveforms.length,
                         completed: 0,
+                        startTime: Date.now(),
                         message: `0 / ${missingWaveforms.length} waveforms`
                     });
                 }
@@ -433,6 +493,11 @@ class CollectionStore {
             // Remove existing task if any
             this.removeTask('waveforms');
             
+            // Clear current processing states
+            this.currentlyProcessingIds = new Set();
+            this.processingFiles = new Set();
+            this.waveformProgress = {};
+            
             const missingWaveforms = await invoke<string[]>('regenerate_waveforms', { 
                 normalize: settingsStore.normalizeOnImport 
             });
@@ -447,6 +512,7 @@ class CollectionStore {
                     status: 'running',
                     total: missingWaveforms.length,
                     completed: 0,
+                    startTime: Date.now(),
                     message: `0 / ${missingWaveforms.length} waveforms`
                 });
             }
