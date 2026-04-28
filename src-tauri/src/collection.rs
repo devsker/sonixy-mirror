@@ -356,159 +356,41 @@ pub fn trim_and_save(
     start_pct: f32,
     end_pct: f32,
 ) -> Result<(), String> {
-    let file = std::fs::File::open(src_path).map_err(|e| e.to_string())?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
-    let mut hint = Hint::new();
-    if let Some(ext) = src_path.extension() {
-        hint.with_extension(&ext.to_string_lossy());
-    }
-
-    let meta_opts = MetadataOptions::default();
-    let fmt_opts = FormatOptions::default();
-    let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &fmt_opts, &meta_opts)
+    let tagged_file = Probe::open(src_path)
+        .map_err(|e| e.to_string())?
+        .read()
         .map_err(|e| e.to_string())?;
+    let duration = tagged_file.properties().duration().as_secs_f32();
 
-    let mut format = probed.format;
-    let track = format
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-        .ok_or("No valid audio track found")?;
-
-    let dec_opts = DecoderOptions::default();
-    let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &dec_opts)
-        .map_err(|e| e.to_string())?;
-
-    let track_id = track.id;
-    let sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
-    let channels = track
-        .codec_params
-        .channels
-        .map(|c| c.count() as u16)
-        .unwrap_or(2);
-
-    // Calculate frame ranges
-    let total_frames = track.codec_params.n_frames.unwrap_or_else(|| {
-        // If n_frames is missing, estimate from duration or just decode all
-        0
-    });
-
-    // Better to decode everything if we don't know total_frames,
-    // but usually it's available. If not, we'll just use the time-based approach.
-
-    let spec = hound::WavSpec {
-        channels,
-        sample_rate,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
+    let start_time = start_pct * duration;
+    let end_time = if end_pct > 0.0 {
+        end_pct * duration
+    } else {
+        duration
     };
-    let mut writer = hound::WavWriter::create(dest_path, spec).map_err(|e| e.to_string())?;
+    let duration_to_cut = end_time - start_time;
 
-    let mut current_frame: u64 = 0;
+    let output = std::process::Command::new("ffmpeg")
+        .arg("-y")
+        .arg("-ss")
+        .arg(start_time.to_string())
+        .arg("-t")
+        .arg(duration_to_cut.to_string())
+        .arg("-i")
+        .arg(src_path)
+        .arg("-c")
+        .arg("copy")
+        .arg(dest_path)
+        .output()
+        .map_err(|e| format!("Failed to execute ffmpeg: {}", e))?;
 
-    // Simplified: decode and write if within percentage range of the whole file
-    // To be precise, we should really use symphonia's seek if possible,
-    // but for now, decoding and skipping is safer across all formats.
-
-    while let Ok(packet) = format.next_packet() {
-        if packet.track_id() != track_id {
-            continue;
-        }
-
-        match decoder.decode(&packet) {
-            Ok(AudioBufferRef::F32(buf)) => {
-                let frames = buf.frames();
-                let start_frame = (start_pct * total_frames as f32) as u64;
-                let end_frame = (end_pct * total_frames as f32) as u64;
-
-                for i in 0..frames {
-                    let f = current_frame + i as u64;
-                    if f >= start_frame && (f <= end_frame || end_frame == 0) {
-                        for plane in buf.planes().planes() {
-                            let sample = (plane[i] * 32767.0) as i16;
-                            writer.write_sample(sample).map_err(|e| e.to_string())?;
-                        }
-                    }
-                }
-                current_frame += frames as u64;
-            }
-            Ok(AudioBufferRef::S16(buf)) => {
-                let frames = buf.frames();
-                let start_frame = (start_pct * total_frames as f32) as u64;
-                let end_frame = (end_pct * total_frames as f32) as u64;
-
-                for i in 0..frames {
-                    let f = current_frame + i as u64;
-                    if f >= start_frame && (f <= end_frame || end_frame == 0) {
-                        for plane in buf.planes().planes() {
-                            writer.write_sample(plane[i]).map_err(|e| e.to_string())?;
-                        }
-                    }
-                }
-                current_frame += frames as u64;
-            }
-            // Add other formats as needed, or convert everything to f32 first
-            Ok(AudioBufferRef::U8(buf)) => {
-                let frames = buf.frames();
-                let start_frame = (start_pct * total_frames as f32) as u64;
-                let end_frame = (end_pct * total_frames as f32) as u64;
-                for i in 0..frames {
-                    let f = current_frame + i as u64;
-                    if f >= start_frame && (f <= end_frame || end_frame == 0) {
-                        for plane in buf.planes().planes() {
-                            let sample = (plane[i] as i16 - 128) * 256;
-                            writer.write_sample(sample).map_err(|e| e.to_string())?;
-                        }
-                    }
-                }
-                current_frame += frames as u64;
-            }
-            Ok(AudioBufferRef::S24(buf)) => {
-                let frames = buf.frames();
-                let start_frame = (start_pct * total_frames as f32) as u64;
-                let end_frame = (end_pct * total_frames as f32) as u64;
-                for i in 0..frames {
-                    let f = current_frame + i as u64;
-                    if f >= start_frame && (f <= end_frame || end_frame == 0) {
-                        for plane in buf.planes().planes() {
-                            let sample = (plane[i].0 >> 8) as i16;
-                            writer.write_sample(sample).map_err(|e| e.to_string())?;
-                        }
-                    }
-                }
-                current_frame += frames as u64;
-            }
-            Ok(AudioBufferRef::S32(buf)) => {
-                let frames = buf.frames();
-                let start_frame = (start_pct * total_frames as f32) as u64;
-                let end_frame = (end_pct * total_frames as f32) as u64;
-                for i in 0..frames {
-                    let f = current_frame + i as u64;
-                    if f >= start_frame && (f <= end_frame || end_frame == 0) {
-                        for plane in buf.planes().planes() {
-                            let sample = (plane[i] >> 16) as i16;
-                            writer.write_sample(sample).map_err(|e| e.to_string())?;
-                        }
-                    }
-                }
-                current_frame += frames as u64;
-            }
-            Ok(_) => {}
-            Err(symphonia::core::errors::Error::IoError(_)) => break,
-            Err(symphonia::core::errors::Error::DecodeError(_)) => continue,
-            Err(_) => break,
-        }
-
-        // Stop early if we passed the end frame
-        let end_frame = (end_pct * total_frames as f32) as u64;
-        if end_frame > 0 && current_frame > end_frame {
-            break;
-        }
+    if !output.status.success() {
+        return Err(format!(
+            "ffmpeg failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
 
-    writer.finalize().map_err(|e| e.to_string())?;
     Ok(())
 }
 

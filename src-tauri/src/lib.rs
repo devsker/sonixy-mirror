@@ -545,7 +545,9 @@ async fn prepare_drag_clip(
     let temp_dir = std::env::temp_dir();
     let clip_filename = format!("clip_{}_{}", id, filename);
     let mut dest_path = temp_dir.join(clip_filename);
-    dest_path.set_extension("wav");
+    if let Some(ext) = full_path.extension() {
+        dest_path.set_extension(ext);
+    }
 
     collection::trim_and_save(&full_path, &dest_path, start_pct, end_pct)?;
 
