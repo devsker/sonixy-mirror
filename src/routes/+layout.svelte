@@ -177,6 +177,7 @@
 		--scrollbar-track: transparent;
 		--scrollbar-thumb: #cccccc;
 		--scrollbar-thumb-hover: #b0b0b0;
+		--selection-color: #000000;
 	}
 
 	:global(html.dark) {
@@ -191,6 +192,7 @@
 		--icon-hover: #ffffff;
 		--scrollbar-thumb: #444444;
 		--scrollbar-thumb-hover: #555555;
+		--selection-color: #007acc;
 	}
 
 	:global(body) {

@@ -209,6 +209,18 @@
 			</clipPath>
 		</defs>
 
+		{#if currentSelection}
+			<rect
+				x={currentSelection.start * barsCount * 4}
+				y="0"
+				width={(currentSelection.end - currentSelection.start) * barsCount * 4}
+				height="100"
+				fill="var(--selection-color)"
+				fill-opacity="0.1"
+				pointer-events="none"
+			/>
+		{/if}
+
 		<g class="waveform-base">
 			{#each data as val, i (i)}
 				{@const h = getBarHeight(val)}
@@ -246,9 +258,9 @@
 				y="0"
 				width={(currentSelection.end - currentSelection.start) * barsCount * 4}
 				height="100"
-				fill={color}
-				fill-opacity="0.2"
-				stroke={color}
+				fill="transparent"
+				stroke="var(--selection-color)"
+				stroke-opacity="0.8"
 				stroke-width="1"
 				onmousedown={async (e) => {
 					e.stopPropagation();
@@ -319,8 +331,8 @@
 
 	.selection-rect.preparing {
 		cursor: wait;
-		stroke-width: 1.5;
-		stroke-dasharray: 4 4;
+		stroke-width: 3;
+		stroke-dasharray: 8 8;
 		animation: dash 0.5s linear infinite;
 	}
 
@@ -332,7 +344,7 @@
 
 	@keyframes dash {
 		to {
-			stroke-dashoffset: -8;
+			stroke-dashoffset: -16;
 		}
 	}
 
