@@ -1,7 +1,65 @@
-# Tauri + SvelteKit + TypeScript
+<div align="center">
+  <img src="src-tauri/icons/icon.png" width="128" height="128" alt="Sonixy Logo">
+  <h1>Sonixy</h1>
+  <p>A modern, lightweight audio library manager and player built for performance and precision.</p>
+</div>
 
-This template should help get you started developing with Tauri, SvelteKit and TypeScript in Vite.
+<p align="center">
+  <img src="static/screenshot.png" alt="Sonixy Screenshot" width="800">
+</p>
 
-## Recommended IDE Setup
+Sonixy is a high-performance desktop application designed for audio enthusiasts and creators who need a fast, reliable way to manage and audition their audio collections. Built with **Tauri**, **Svelte 5**, and **Rust**, it combines the speed of native code with a refined, modern user interface.
 
-[VS Code](https://code.visualstudio.com/) + [Svelte](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer).
+## Key Features
+
+- **High-Performance Scanning**: Parallel metadata extraction using Rust, capable of indexing thousands of files in seconds.
+- **Smart Collection**: SQLite-backed library with advanced filtering by format, tags, and more.
+- **Audio Utilities**: 
+  - **Normalization**: EBU R128 (-16 LUFS) normalization to keep your library consistent.
+  - **Precision Trimming**: Quick, lossless trimming of audio files.
+- **Metadata Management**: Easily add and manage genre tags and other metadata.
+- **Modern UX**: 
+  - Frameless, high-performance UI.
+  - Drag-and-drop support (into and out of the app).
+  - Customizable column layouts and sorting.
+  - Dark mode support.
+
+## Getting Started
+
+### Prerequisites
+
+To run or build Sonixy, you'll need the following installed:
+
+- [Rust](https://www.rust-lang.org/tools/install) (latest stable)
+- [Node.js](https://nodejs.org/) (v18+)
+- [pnpm](https://pnpm.io/)
+- [FFmpeg](https://ffmpeg.org/) (required for normalization and trimming features)
+
+### Installation
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://codeberg.org/sker/sonixy.git
+   cd sonixy
+   ```
+
+2. **Install dependencies**:
+   ```bash
+   pnpm install
+   ```
+
+3. **Run in development mode**:
+   ```bash
+   pnpm tauri dev
+   ```
+
+## Development
+
+### Available Scripts
+
+- `pnpm dev`: Starts the Vite development server.
+- `pnpm build`: Builds the frontend for production.
+- `pnpm tauri dev`: Starts the Tauri app in development mode.
+- `pnpm tauri build`: Builds the production-ready desktop application.
+- `pnpm lint`: Runs ESLint, Prettier, and Cargo Clippy checks.
+- `pnpm format`: Formats both frontend and Rust code.

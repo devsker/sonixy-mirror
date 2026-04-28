@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
-	import { settingsStore, type Settings } from '$lib/settings-store.svelte';
+	import { settingsStore, type Settings, type TitlebarLayout } from '$lib/settings-store.svelte';
 	import { collectionStore } from '$lib/collection-store.svelte';
+	import TitlebarVisualizer from '$lib/components/TitlebarVisualizer.svelte';
 
 	const settings = getContext<Settings>('settings-context') || settingsStore;
 
@@ -9,7 +10,7 @@
 	let showCheckboxes = $derived(settings.showCheckboxes);
 	let normalizeOnImport = $derived(settings.normalizeOnImport);
 	let playbackDelay = $derived(settings.playbackDelay);
-	
+
 	function handleThemeChange(e: Event) {
 		settings.theme = (e.target as HTMLSelectElement).value as 'system' | 'dark' | 'light';
 	}
@@ -60,6 +61,25 @@
 					<label for="showCheckboxes" class="checkbox-label">Show Selection Checkboxes</label>
 				</div>
 				<p class="description">Show or hide the selection checkboxes in the file list.</p>
+			</div>
+
+			<div class="setting-item">
+				<label>Titlebar Layout</label>
+				<TitlebarVisualizer {settings} />
+				<button
+					class="reset-btn"
+					onclick={() =>
+						(settings.titlebarLayout = [
+                            'section:left', 'title', 'folder',
+                            'section:center', 'playback', 'volume',
+                            'section:right', 'tasks', 'refresh', 'window-controls'
+                        ])}
+				>
+					Reset Titlebar Layout
+				</button>
+				<p class="description">
+					Drag and drop elements to customize the titlebar layout. Drag elements out of the titlebar to remove them.
+				</p>
 			</div>
 
 			<div class="setting-item">
@@ -137,7 +157,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 32px;
-		max-width: 600px;
+		width: 100%;
 	}
 
 	.settings-section h2 {

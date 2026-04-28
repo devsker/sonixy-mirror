@@ -3,6 +3,7 @@
 	import { Minus, Square, X, RefreshCw, CheckCircle2, AlertCircle, Loader2, Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Volume1, FolderOpen } from 'lucide-svelte';
 	import { collectionStore } from '$lib/collection-store.svelte';
 	import { audioPlayer } from '$lib/audio-player.svelte';
+    import { settingsStore } from '$lib/settings-store.svelte';
 
 	const appWindow = getCurrentWindow();
     let loading = $derived(collectionStore.loading);
@@ -24,6 +25,28 @@
     let replayProgress = $derived(audioPlayer.replayProgress);
     let volume = $derived(audioPlayer.volume);
     let currentFileId = $derived(audioPlayer.currentFileId);
+
+    let sections = $derived.by(() => {
+        const result = {
+            left: [] as string[],
+            center: [] as string[],
+            right: [] as string[]
+        };
+        let currentSection: 'left' | 'center' | 'right' = 'left';
+
+        for (const id of settingsStore.titlebarLayout) {
+            if (id === 'section:left') {
+                currentSection = 'left';
+            } else if (id === 'section:center') {
+                currentSection = 'center';
+            } else if (id === 'section:right') {
+                currentSection = 'right';
+            } else {
+                result[currentSection].push(id);
+            }
+        }
+        return result;
+    });
 
 	async function minimize() {
 		await appWindow.minimize();
@@ -63,49 +86,52 @@
 
 <svelte:window onclick={closeTasks} />
 
-<div data-tauri-drag-region class="titlebar">
-	<div data-tauri-drag-region class="title-section">
-		<span class="title">Sonixy</span>
+{#snippet renderElement(id: string)}
+    {#if id === 'title'}
+        <div data-tauri-drag-region class="title-container">
+            <span class="title">Sonixy</span>
+        </div>
+    {:else if id === 'folder'}
         <button class="folder-btn" onclick={() => collectionStore.openCollection()} aria-label="Open Collection">
             <FolderOpen size={14} />
         </button>
-	</div>
-
-    <div class="playback-controls">
-        <button class="playback-btn" onclick={(e) => { audioPlayer.previous(); blur(e); }} aria-label="Previous">
-            <SkipBack size={14} fill="currentColor" />
-        </button>
-        <button class="playback-btn play-pause" onclick={(e) => { audioPlayer.toggle(); blur(e); }} aria-label={isPlaying ? 'Pause' : 'Play'}>
-            {#if isWaitingToReplay}
-                <svg width="18" height="18" viewBox="0 0 18 18">
-                    <circle 
-                        cx="9" cy="9" r="7" 
-                        fill="none" 
-                        stroke="currentColor" 
-                        stroke-width="2" 
-                        opacity="0.2"
-                    />
-                    <circle 
-                        cx="9" cy="9" r="7" 
-                        fill="none" 
-                        stroke="currentColor" 
-                        stroke-width="2" 
-                        stroke-dasharray="44" 
-                        stroke-dashoffset={44 - (44 * replayProgress)}
-                        stroke-linecap="round"
-                        transform="rotate(-90 9 9)"
-                    />
-                </svg>
-            {:else if isPlaying}
-                <Pause size={16} fill="currentColor" />
-            {:else}
-                <Play size={16} fill="currentColor" />
-            {/if}
-        </button>
-        <button class="playback-btn" onclick={(e) => { audioPlayer.next(); blur(e); }} aria-label="Next">
-            <SkipForward size={14} fill="currentColor" />
-        </button>
-
+    {:else if id === 'playback'}
+        <div class="playback-controls">
+            <button class="playback-btn" onclick={(e) => { audioPlayer.previous(); blur(e); }} aria-label="Previous">
+                <SkipBack size={14} fill="currentColor" />
+            </button>
+            <button class="playback-btn play-pause" onclick={(e) => { audioPlayer.toggle(); blur(e); }} aria-label={isPlaying ? 'Pause' : 'Play'}>
+                {#if isWaitingToReplay}
+                    <svg width="18" height="18" viewBox="0 0 18 18">
+                        <circle 
+                            cx="9" cy="9" r="7" 
+                            fill="none" 
+                            stroke="currentColor" 
+                            stroke-width="2" 
+                            opacity="0.2"
+                        />
+                        <circle 
+                            cx="9" cy="9" r="7" 
+                            fill="none" 
+                            stroke="currentColor" 
+                            stroke-width="2" 
+                            stroke-dasharray="44" 
+                            stroke-dashoffset={44 - (44 * replayProgress)}
+                            stroke-linecap="round"
+                            transform="rotate(-90 9 9)"
+                        />
+                    </svg>
+                {:else if isPlaying}
+                    <Pause size={16} fill="currentColor" />
+                {:else}
+                    <Play size={16} fill="currentColor" />
+                {/if}
+            </button>
+            <button class="playback-btn" onclick={(e) => { audioPlayer.next(); blur(e); }} aria-label="Next">
+                <SkipForward size={14} fill="currentColor" />
+            </button>
+        </div>
+    {:else if id === 'volume'}
         <div class="volume-control" onwheel={handleVolumeWheel}>
             <button class="playback-btn volume-btn" onclick={(e) => { audioPlayer.toggleMute(); blur(e); }}>
                 {#if volume === 0}
@@ -126,100 +152,121 @@
                 class="volume-slider"
             />
         </div>
+    {:else if id === 'tasks' && collectionPath}
+        <div 
+            class="task-container" 
+            onclick={(e) => e.stopPropagation()} 
+            onkeydown={(e) => e.stopPropagation()}
+            role="presentation"
+        >
+            <button 
+                class="control-btn task-btn" 
+                onclick={toggleTasks} 
+                aria-label="Tasks"
+                class:active={activeTasksCount > 0}
+            >
+                <svg width="18" height="18" viewBox="0 0 18 18">
+                    <circle 
+                        cx="9" cy="9" r="7" 
+                        fill="none" 
+                        stroke="currentColor" 
+                        stroke-width="2" 
+                        opacity="0.2"
+                    />
+                    <circle 
+                        cx="9" cy="9" r="7" 
+                        fill="none" 
+                        stroke="var(--accent-color, #3b82f6)" 
+                        stroke-width="2" 
+                        stroke-dasharray="44" 
+                        stroke-dashoffset={44 - (44 * overallProgress / 100)}
+                        stroke-linecap="round"
+                        transform="rotate(-90 9 9)"
+                    />
+                </svg>
+            </button>
+
+            {#if showTasks}
+                <div class="tasks-popover">
+                    <div class="popover-header">
+                        <span>Background Tasks</span>
+                    </div>
+                    <div class="tasks-list">
+                        {#if tasks.length === 0}
+                            <div class="no-tasks">No active tasks</div>
+                        {:else}
+                            {#each tasks as task (task.id)}
+                                <div class="task-item">
+                                    <div class="task-info">
+                                        <span class="task-name">{task.name}</span>
+                                        <div class="task-status">
+                                            {#if task.status === 'running'}
+                                                <Loader2 size={12} class="animate-spin" />
+                                            {:else if task.status === 'completed'}
+                                                <CheckCircle2 size={12} color="var(--success-color, #22c55e)" />
+                                            {:else if task.status === 'failed'}
+                                                <AlertCircle size={12} color="var(--error-color, #ef4444)" />
+                                            {/if}
+                                            <span>{Math.round(task.progress)}%</span>
+                                        </div>
+                                    </div>
+                                    <div class="task-progress-bar">
+                                        <div 
+                                            class="progress-fill" 
+                                            style="width: {task.progress}%"
+                                            class:completed={task.status === 'completed'}
+                                            class:failed={task.status === 'failed'}
+                                        ></div>
+                                    </div>
+                                    {#if task.message}
+                                        <span class="task-message">{task.message}</span>
+                                    {/if}
+                                </div>
+                            {/each}
+                        {/if}
+                    </div>
+                </div>
+            {/if}
+        </div>
+    {:else if id === 'refresh' && collectionPath}
+        <button class="control-btn" onclick={() => collectionStore.refresh()} aria-label="Refresh" disabled={loading}>
+            <RefreshCw size={14} class={loading ? 'animate-spin' : ''} />
+        </button>
+    {:else if id === 'window-controls'}
+        <div class="window-controls">
+            <button class="control-btn" onclick={minimize} aria-label="Minimize">
+                <Minus size={14} />
+            </button>
+            <button class="control-btn" onclick={toggleMaximize} aria-label="Maximize">
+                <Square size={12} />
+            </button>
+            <button class="control-btn close-btn" onclick={close} aria-label="Close">
+                <X size={14} />
+            </button>
+        </div>
+    {:else if id === 'spacer'}
+        <div data-tauri-drag-region class="spacer"></div>
+    {/if}
+{/snippet}
+
+<div data-tauri-drag-region class="titlebar">
+    <div data-tauri-drag-region class="titlebar-section titlebar-left">
+        {#each sections.left as id}
+            {@render renderElement(id)}
+        {/each}
+    </div>
+    
+    <div data-tauri-drag-region class="titlebar-section titlebar-center">
+        {#each sections.center as id}
+            {@render renderElement(id)}
+        {/each}
     </div>
 
-	<div class="controls">
-        {#if collectionPath}
-            <div 
-                class="task-container" 
-                onclick={(e) => e.stopPropagation()} 
-                onkeydown={(e) => e.stopPropagation()}
-                role="presentation"
-            >
-                <button 
-                    class="control-btn task-btn" 
-                    onclick={toggleTasks} 
-                    aria-label="Tasks"
-                    class:active={activeTasksCount > 0}
-                >
-                    <svg width="18" height="18" viewBox="0 0 18 18">
-                        <circle 
-                            cx="9" cy="9" r="7" 
-                            fill="none" 
-                            stroke="currentColor" 
-                            stroke-width="2" 
-                            opacity="0.2"
-                        />
-                        <circle 
-                            cx="9" cy="9" r="7" 
-                            fill="none" 
-                            stroke="var(--accent-color, #3b82f6)" 
-                            stroke-width="2" 
-                            stroke-dasharray="44" 
-                            stroke-dashoffset={44 - (44 * overallProgress / 100)}
-                            stroke-linecap="round"
-                            transform="rotate(-90 9 9)"
-                        />
-                    </svg>
-                </button>
-
-                {#if showTasks}
-                    <div class="tasks-popover">
-                        <div class="popover-header">
-                            <span>Background Tasks</span>
-                        </div>
-                        <div class="tasks-list">
-                            {#if tasks.length === 0}
-                                <div class="no-tasks">No active tasks</div>
-                            {:else}
-                                {#each tasks as task (task.id)}
-                                    <div class="task-item">
-                                        <div class="task-info">
-                                            <span class="task-name">{task.name}</span>
-                                            <div class="task-status">
-                                                {#if task.status === 'running'}
-                                                    <Loader2 size={12} class="animate-spin" />
-                                                {:else if task.status === 'completed'}
-                                                    <CheckCircle2 size={12} color="var(--success-color, #22c55e)" />
-                                                {:else if task.status === 'failed'}
-                                                    <AlertCircle size={12} color="var(--error-color, #ef4444)" />
-                                                {/if}
-                                                <span>{Math.round(task.progress)}%</span>
-                                            </div>
-                                        </div>
-                                        <div class="task-progress-bar">
-                                            <div 
-                                                class="progress-fill" 
-                                                style="width: {task.progress}%"
-                                                class:completed={task.status === 'completed'}
-                                                class:failed={task.status === 'failed'}
-                                            ></div>
-                                        </div>
-                                        {#if task.message}
-                                            <span class="task-message">{task.message}</span>
-                                        {/if}
-                                    </div>
-                                {/each}
-                            {/if}
-                        </div>
-                    </div>
-                {/if}
-            </div>
-
-            <button class="control-btn" onclick={() => collectionStore.refresh()} aria-label="Refresh" disabled={loading}>
-                <RefreshCw size={14} class={loading ? 'animate-spin' : ''} />
-            </button>
-        {/if}
-		<button class="control-btn" onclick={minimize} aria-label="Minimize">
-			<Minus size={14} />
-		</button>
-		<button class="control-btn" onclick={toggleMaximize} aria-label="Maximize">
-			<Square size={12} />
-		</button>
-		<button class="control-btn close-btn" onclick={close} aria-label="Close">
-			<X size={14} />
-		</button>
-	</div>
+    <div data-tauri-drag-region class="titlebar-section titlebar-right">
+        {#each sections.right as id}
+            {@render renderElement(id)}
+        {/each}
+    </div>
 </div>
 
 <style>
@@ -232,20 +279,46 @@
 		display: flex;
 		flex-direction: row;
 		flex-wrap: nowrap;
-		justify-content: flex-start;
+		justify-content: space-between;
 		align-items: center;
 		border-bottom: 1px solid var(--border-color);
 		z-index: 1000;
 		box-sizing: border-box;
 	}
 
-	.title-section {
-		flex: 1;
+    .titlebar-section {
+        display: flex;
+        align-items: center;
+        height: 100%;
+        min-width: 0;
+    }
+
+    .titlebar-left {
+        flex: 1;
+        justify-content: flex-start;
+    }
+
+    .titlebar-center {
+        flex: 0 1 auto;
+        justify-content: center;
+    }
+
+    .titlebar-right {
+        flex: 1;
+        justify-content: flex-end;
+    }
+
+    .spacer {
+        width: 24px;
+        height: 100%;
+    }
+
+	.title-container {
 		display: flex;
 		align-items: center;
 		height: 100%;
 		min-width: 0;
-		padding-left: 12px;
+		padding: 0 12px;
 	}
 
 	.title {
@@ -266,7 +339,6 @@
         align-items: center;
         width: 28px;
         height: 28px;
-        margin-left: 8px;
         border: none;
         background: transparent;
         color: var(--icon-color);
@@ -323,10 +395,8 @@
         display: flex;
         align-items: center;
         gap: 4px;
-        margin-left: 12px;
-        padding-left: 12px;
-        border-left: 1px solid var(--border-color);
-        height: 16px;
+        padding: 0 12px;
+        height: 100%;
     }
 
     .volume-slider {
@@ -364,13 +434,10 @@
         transform: scale(1.2);
     }
 
-	.controls {
-		display: flex;
-		flex-direction: row;
-		flex-wrap: nowrap;
-		height: 100%;
-		flex-shrink: 0;
-	}
+    .window-controls {
+        display: flex;
+        height: 100%;
+    }
 
     .task-container {
         position: relative;

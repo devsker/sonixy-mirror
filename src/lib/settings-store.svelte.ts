@@ -4,6 +4,7 @@ export interface Settings {
     normalizeOnImport: boolean;
     columnOrder: string[];
     playbackDelay: number; // in milliseconds
+    titlebarLayout: string[];
 }
 
 class SettingsStore {
@@ -12,6 +13,11 @@ class SettingsStore {
     normalizeOnImport = $state(true);
     columnOrder = $state(['filename', 'format', 'length', 'size', 'tags']);
     playbackDelay = $state(500); // Default to 500ms
+    titlebarLayout = $state<string[]>([
+        'section:left', 'title', 'folder',
+        'section:center', 'playback', 'volume',
+        'section:right', 'tasks', 'refresh', 'window-controls'
+    ]);
 
     constructor() {
         if (typeof window !== 'undefined') {
@@ -24,6 +30,20 @@ class SettingsStore {
                     this.normalizeOnImport = parsed.normalizeOnImport ?? true;
                     this.columnOrder = parsed.columnOrder || ['filename', 'format', 'length', 'size', 'tags'];
                     this.playbackDelay = parsed.playbackDelay ?? 500;
+                    
+                    if (parsed.titlebarLayout) {
+                        if (!Array.isArray(parsed.titlebarLayout)) {
+                            // Migrate from object format to flat array with markers
+                            const layout = parsed.titlebarLayout;
+                            this.titlebarLayout = [
+                                'section:left', ...(layout.left || []),
+                                'section:center', ...(layout.center || []),
+                                'section:right', ...(layout.right || [])
+                            ];
+                        } else {
+                            this.titlebarLayout = parsed.titlebarLayout;
+                        }
+                    }
                 } catch (e) {
                     console.error('Failed to parse settings', e);
                 }
@@ -38,7 +58,8 @@ class SettingsStore {
                         showCheckboxes: this.showCheckboxes,
                         normalizeOnImport: this.normalizeOnImport,
                         columnOrder: this.columnOrder,
-                        playbackDelay: this.playbackDelay
+                        playbackDelay: this.playbackDelay,
+                        titlebarLayout: $state.snapshot(this.titlebarLayout)
                     }));
                 }
             });
