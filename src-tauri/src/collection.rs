@@ -541,7 +541,7 @@ where
         0.0
     };
 
-    let bars = 256;
+    let bars = 512;
     let chunk_size = samples.len() / bars;
     if chunk_size == 0 {
         return None;

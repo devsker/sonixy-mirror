@@ -81,8 +81,32 @@
 		};
 	});
 
-	const data = $derived(waveformData || Array(256).fill(0));
+	const data = $derived(waveformData || Array(512).fill(0));
 	const barsCount = $derived(data.length);
+
+	const waveformPath = $derived.by(() => {
+		if (data.length === 0) return '';
+		const spacing = 3;
+		let topPoints = '';
+		let bottomPoints = '';
+
+		for (let i = 0; i < data.length; i++) {
+			const x = i * spacing;
+			const h = getBarHeight(data[i]);
+			const yTop = 50 - h / 2;
+			const yBottom = 50 + h / 2;
+
+			if (i === 0) {
+				topPoints += `M ${x},${yTop} `;
+				bottomPoints = `L ${x},${yBottom}`;
+			} else {
+				topPoints += `L ${x},${yTop} `;
+				bottomPoints = `L ${x},${yBottom} ` + bottomPoints;
+			}
+		}
+
+		return topPoints + bottomPoints + ' Z';
+	});
 
 	const currentSelection = $derived.by(() => {
 		if (isDragging && dragStartPos !== null && currentPos !== null && svgElement) {
@@ -175,8 +199,10 @@
 	}
 
 	function getBarHeight(val: number) {
-		const minHeight = 2;
-		const scaledHeight = val * 100;
+		const minHeight = 1;
+		// Use a slight non-linear scaling to make low volumes more visible
+		const boosted = Math.pow(val, 0.8);
+		const scaledHeight = boosted * 90;
 		return Math.max(minHeight, scaledHeight);
 	}
 </script>
@@ -191,7 +217,7 @@
 >
 	<svg
 		bind:this={svgElement}
-		viewBox="0 0 {barsCount * 4} 100"
+		viewBox="0 0 {barsCount * 3} 100"
 		preserveAspectRatio="none"
 		class="waveform-svg"
 		class:hidden={!waveformData && !isLoading}
@@ -199,21 +225,21 @@
 		role="presentation"
 	>
 		<defs>
-			<linearGradient id="waveformGradient" x1="0" y1="0" x2="0" y2="1">
-				<stop offset="0%" stop-color={color} stop-opacity="0.4" />
-				<stop offset="50%" stop-color={color} stop-opacity="0.6" />
-				<stop offset="100%" stop-color={color} stop-opacity="0.4" />
+			<linearGradient id="waveformGradient-{id}" x1="0" y1="0" x2="0" y2="1">
+				<stop offset="0%" stop-color={color} stop-opacity="0.15" />
+				<stop offset="50%" stop-color={color} stop-opacity="0.3" />
+				<stop offset="100%" stop-color={color} stop-opacity="0.15" />
 			</linearGradient>
-			<linearGradient id="waveformPlayedGradient" x1="0" y1="0" x2="0" y2="1">
-				<stop offset="0%" stop-color={color} stop-opacity="0.8" />
+			<linearGradient id="waveformPlayedGradient-{id}" x1="0" y1="0" x2="0" y2="1">
+				<stop offset="0%" stop-color={color} stop-opacity="0.7" />
 				<stop offset="50%" stop-color={color} stop-opacity="1" />
-				<stop offset="100%" stop-color={color} stop-opacity="0.8" />
+				<stop offset="100%" stop-color={color} stop-opacity="0.7" />
 			</linearGradient>
 			<clipPath id="progressClip-{id}">
 				<rect
 					x="0"
 					y="0"
-					width={audioPlayer.currentFileId === id ? audioPlayer.progress * barsCount * 4 : 0}
+					width={audioPlayer.currentFileId === id ? audioPlayer.progress * barsCount * 3 : 0}
 					height="100"
 				/>
 			</clipPath>
@@ -221,9 +247,9 @@
 
 		{#if currentSelection}
 			<rect
-				x={currentSelection.start * barsCount * 4}
+				x={currentSelection.start * barsCount * 3}
 				y="0"
-				width={(currentSelection.end - currentSelection.start) * barsCount * 4}
+				width={(currentSelection.end - currentSelection.start) * barsCount * 3}
 				height="100"
 				fill="var(--selection-color)"
 				fill-opacity="0.1"
@@ -232,41 +258,27 @@
 		{/if}
 
 		<g class="waveform-base">
-			{#each data as val, i (i)}
-				{@const h = getBarHeight(val)}
-				<rect
-					class="bar"
-					x={i * 4}
-					y={50 - h / 2}
-					width="2.5"
-					height={h}
-					fill="url(#waveformGradient)"
-					rx="1.25"
-				/>
-			{/each}
+			<path
+				d={waveformPath}
+				fill="url(#waveformGradient-{id})"
+				class="waveform-path"
+			/>
 		</g>
 
 		<g class="waveform-played" clip-path="url(#progressClip-{id})">
-			{#each data as val, i (i)}
-				{@const h = getBarHeight(val)}
-				<rect
-					class="bar"
-					x={i * 4}
-					y={50 - h / 2}
-					width="2.5"
-					height={h}
-					fill="url(#waveformPlayedGradient)"
-					rx="1.25"
-				/>
-			{/each}
+			<path
+				d={waveformPath}
+				fill="url(#waveformPlayedGradient-{id})"
+				class="waveform-path played"
+			/>
 		</g>
 
 		{#if currentSelection}
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<rect
-				x={currentSelection.start * barsCount * 4}
+				x={currentSelection.start * barsCount * 3}
 				y="0"
-				width={(currentSelection.end - currentSelection.start) * barsCount * 4}
+				width={(currentSelection.end - currentSelection.start) * barsCount * 3}
 				height="100"
 				fill="transparent"
 				stroke="var(--selection-color)"
@@ -325,17 +337,23 @@
 		opacity: 0.9;
 		transition: opacity 0.3s ease;
 		cursor: crosshair;
+		overflow: visible;
 	}
 
 	.waveform-svg.hidden {
 		opacity: 0;
 	}
 
-	.bar {
-		transition:
-			height 0.4s cubic-bezier(0.4, 0, 0.2, 1),
-			y 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-		pointer-events: none;
+	.waveform-path {
+		transition: d 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+	}
+
+	.waveform-path.played {
+		filter: drop-shadow(0 0 4px rgba(0, 122, 204, 0.2));
+	}
+
+	:global(html.dark) .waveform-path.played {
+		filter: drop-shadow(0 0 6px rgba(0, 122, 204, 0.4));
 	}
 
 	.selection-rect {
@@ -381,10 +399,10 @@
 
 	.loading-placeholder {
 		width: 100%;
-		height: 2px;
+		height: 4px;
 		background-color: var(--border-color);
-		opacity: 0.3;
-		border-radius: 1px;
+		opacity: 0.2;
+		border-radius: 2px;
 		overflow: hidden;
 		position: relative;
 	}
@@ -393,8 +411,15 @@
 		position: absolute;
 		left: 0;
 		height: 100%;
-		background-color: var(--icon-active);
-		transition: width 0.1s ease-out;
+		background: linear-gradient(90deg, transparent, var(--icon-active), transparent);
+		background-size: 200% 100%;
+		animation: shimmer 1.5s infinite linear;
+		transition: width 0.2s ease-out;
+	}
+
+	@keyframes shimmer {
+		from { background-position: -200% 0; }
+		to { background-position: 200% 0; }
 	}
 
 	.progress-text {
