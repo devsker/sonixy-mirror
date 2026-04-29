@@ -19,6 +19,7 @@
 	let isLoading = $state(true);
 	let svgElement = $state<SVGSVGElement | null>(null);
 	let progress = $derived(collectionStore.waveformProgress[id] || 0);
+	let partialData = $derived(collectionStore.partialWaveforms[id] || null);
 
 	// Selection state
 	let selectionStart = $state<number | null>(null);
@@ -81,7 +82,7 @@
 		};
 	});
 
-	const data = $derived(waveformData || Array(512).fill(0));
+	const data = $derived(waveformData || (partialData ? partialData.map(v => v / 255) : Array(512).fill(0)));
 	const barsCount = $derived(data.length);
 
 	const waveformPath = $derived.by(() => {
@@ -90,7 +91,15 @@
 		let topPoints = '';
 		let bottomPoints = '';
 
-		for (let i = 0; i < data.length; i++) {
+		// During calculation, only show bars up to the current progress
+		let lastIdx = data.length - 1;
+		if (!waveformData && isLoading) {
+			lastIdx = Math.min(data.length - 1, Math.floor(progress * data.length));
+		}
+
+		if (lastIdx < 0) return '';
+
+		for (let i = 0; i <= lastIdx; i++) {
 			const x = i * spacing;
 			const h = getBarHeight(data[i]);
 			const yTop = 50 - h / 2;
@@ -199,6 +208,7 @@
 	}
 
 	function getBarHeight(val: number) {
+		if (!val || isNaN(val) || val <= 0) return 0;
 		const minHeight = 1;
 		// Use a slight non-linear scaling to make low volumes more visible
 		const boosted = Math.pow(val, 0.8);
@@ -262,6 +272,7 @@
 				d={waveformPath}
 				fill="url(#waveformGradient-{id})"
 				class="waveform-path"
+				class:no-transition={!waveformData && isLoading}
 			/>
 		</g>
 
@@ -270,6 +281,7 @@
 				d={waveformPath}
 				fill="url(#waveformPlayedGradient-{id})"
 				class="waveform-path played"
+				class:no-transition={!waveformData && isLoading}
 			/>
 		</g>
 
@@ -305,17 +317,6 @@
 			/>
 		{/if}
 	</svg>
-
-	{#if isLoading && !waveformData}
-		<div class="loading-overlay" transition:fade={{ duration: 200 }}>
-			<div class="loading-content">
-				<div class="loading-placeholder">
-					<div class="loading-bar" style="width: {progress * 100}%"></div>
-				</div>
-				<span class="progress-text">{Math.round(progress * 100)}%</span>
-			</div>
-		</div>
-	{/if}
 </div>
 
 <style>
@@ -348,6 +349,10 @@
 		transition: d 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
 	}
 
+	.waveform-path.no-transition {
+		transition: none;
+	}
+
 	.waveform-path.played {
 		filter: drop-shadow(0 0 4px rgba(0, 122, 204, 0.2));
 	}
@@ -377,55 +382,5 @@
 		to {
 			stroke-dashoffset: -16;
 		}
-	}
-
-	.loading-overlay {
-		position: absolute;
-		left: 16px;
-		right: 16px;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		pointer-events: none;
-	}
-
-	.loading-content {
-		width: 100%;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 8px;
-	}
-
-	.loading-placeholder {
-		width: 100%;
-		height: 4px;
-		background-color: var(--border-color);
-		opacity: 0.2;
-		border-radius: 2px;
-		overflow: hidden;
-		position: relative;
-	}
-
-	.loading-bar {
-		position: absolute;
-		left: 0;
-		height: 100%;
-		background: linear-gradient(90deg, transparent, var(--icon-active), transparent);
-		background-size: 200% 100%;
-		animation: shimmer 1.5s infinite linear;
-		transition: width 0.2s ease-out;
-	}
-
-	@keyframes shimmer {
-		from { background-position: -200% 0; }
-		to { background-position: 200% 0; }
-	}
-
-	.progress-text {
-		font-size: 10px;
-		font-weight: 600;
-		color: var(--text-muted);
-		font-variant-numeric: tabular-nums;
 	}
 </style>

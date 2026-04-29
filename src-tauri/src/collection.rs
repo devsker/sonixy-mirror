@@ -394,9 +394,9 @@ pub fn trim_and_save(
     Ok(())
 }
 
-pub fn generate_waveform<F>(path: &Path, on_progress: F) -> Option<(Vec<u8>, f32, f32)>
+pub fn generate_waveform<F>(path: &Path, mut on_progress: F) -> Option<(Vec<u8>, f32, f32)>
 where
-    F: Fn(f32),
+    F: FnMut(f32, Option<Vec<u8>>),
 {
     let file = std::fs::File::open(path).ok()?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
@@ -426,12 +426,13 @@ where
         .ok()?;
 
     let track_id = track.id;
-    let mut samples = Vec::new();
     let mut peak = 0.0f32;
     let mut sum_sq = 0.0f64;
     let mut count = 0u64;
 
     let mut last_progress = -1.0f32;
+    let bars = 512;
+    let mut current_bars = vec![0.0f32; bars];
 
     while let Ok(packet) = format.next_packet() {
         if packet.track_id() != track_id {
@@ -441,88 +442,112 @@ where
         match decoder.decode(&packet) {
             Ok(buf_ref) => {
                 let frames = buf_ref.frames();
+                let start_frame = decoded_frames;
                 decoded_frames += frames as u64;
 
                 if let Some(total) = total_frames {
                     let progress = (decoded_frames as f32 / total as f32).min(1.0);
+                    
+                    // Update bars for these frames
+                    match buf_ref {
+                        AudioBufferRef::F32(buf) => {
+                            for i in 0..buf.frames() {
+                                let frame_idx = start_frame + i as u64;
+                                let bar_idx = ((frame_idx * bars as u64) / total).min(bars as u64 - 1) as usize;
+                                
+                                let mut max = 0.0f32;
+                                for plane in buf.planes().planes() {
+                                    let val = plane[i].abs();
+                                    max = max.max(val);
+                                    peak = peak.max(val);
+                                    sum_sq += (val as f64).powi(2);
+                                    count += 1;
+                                }
+                                current_bars[bar_idx] = current_bars[bar_idx].max(max);
+                            }
+                        }
+                        AudioBufferRef::U8(buf) => {
+                            for i in 0..buf.frames() {
+                                let frame_idx = start_frame + i as u64;
+                                let bar_idx = ((frame_idx * bars as u64) / total).min(bars as u64 - 1) as usize;
+                                
+                                let mut max = 0.0f32;
+                                for plane in buf.planes().planes() {
+                                    let sample = (plane[i] as f32 - 128.0) / 128.0;
+                                    let val = sample.abs();
+                                    max = max.max(val);
+                                    peak = peak.max(val);
+                                    sum_sq += (val as f64).powi(2);
+                                    count += 1;
+                                }
+                                current_bars[bar_idx] = current_bars[bar_idx].max(max);
+                            }
+                        }
+                        AudioBufferRef::S16(buf) => {
+                            for i in 0..buf.frames() {
+                                let frame_idx = start_frame + i as u64;
+                                let bar_idx = ((frame_idx * bars as u64) / total).min(bars as u64 - 1) as usize;
+                                
+                                let mut max = 0.0f32;
+                                for plane in buf.planes().planes() {
+                                    let sample = plane[i] as f32 / 32768.0;
+                                    let val = sample.abs();
+                                    max = max.max(val);
+                                    peak = peak.max(val);
+                                    sum_sq += (val as f64).powi(2);
+                                    count += 1;
+                                }
+                                current_bars[bar_idx] = current_bars[bar_idx].max(max);
+                            }
+                        }
+                        AudioBufferRef::S24(buf) => {
+                            for i in 0..buf.frames() {
+                                let frame_idx = start_frame + i as u64;
+                                let bar_idx = ((frame_idx * bars as u64) / total).min(bars as u64 - 1) as usize;
+                                
+                                let mut max = 0.0f32;
+                                for plane in buf.planes().planes() {
+                                    let sample = plane[i].0 as f32 / 8388608.0;
+                                    let val = sample.abs();
+                                    max = max.max(val);
+                                    peak = peak.max(val);
+                                    sum_sq += (val as f64).powi(2);
+                                    count += 1;
+                                }
+                                current_bars[bar_idx] = current_bars[bar_idx].max(max);
+                            }
+                        }
+                        AudioBufferRef::S32(buf) => {
+                            for i in 0..buf.frames() {
+                                let frame_idx = start_frame + i as u64;
+                                let bar_idx = ((frame_idx * bars as u64) / total).min(bars as u64 - 1) as usize;
+                                
+                                let mut max = 0.0f32;
+                                for plane in buf.planes().planes() {
+                                    let sample = plane[i] as f32 / 2147483648.0;
+                                    let val = sample.abs();
+                                    max = max.max(val);
+                                    peak = peak.max(val);
+                                    sum_sq += (val as f64).powi(2);
+                                    count += 1;
+                                }
+                                current_bars[bar_idx] = current_bars[bar_idx].max(max);
+                            }
+                        }
+                        _ => {}
+                    }
+
                     // Report progress every 1% change to avoid flooding
                     if (progress - last_progress).abs() >= 0.01 {
-                        on_progress(progress);
+                        let partial_data: Vec<u8> = current_bars.iter().map(|&v| (v * 255.0).min(255.0) as u8).collect();
+                        on_progress(progress, Some(partial_data));
                         last_progress = progress;
                     }
-                }
-
-                match buf_ref {
-                    AudioBufferRef::F32(buf) => {
-                        for i in 0..buf.frames() {
-                            let mut max = 0.0f32;
-                            for plane in buf.planes().planes() {
-                                let val = plane[i].abs();
-                                max = max.max(val);
-                                peak = peak.max(val);
-                                sum_sq += (val as f64).powi(2);
-                                count += 1;
-                            }
-                            samples.push(max);
-                        }
-                    }
-                    AudioBufferRef::U8(buf) => {
-                        for i in 0..buf.frames() {
-                            let mut max = 0.0f32;
-                            for plane in buf.planes().planes() {
-                                let sample = (plane[i] as f32 - 128.0) / 128.0;
-                                let val = sample.abs();
-                                max = max.max(val);
-                                peak = peak.max(val);
-                                sum_sq += (val as f64).powi(2);
-                                count += 1;
-                            }
-                            samples.push(max);
-                        }
-                    }
-                    AudioBufferRef::S16(buf) => {
-                        for i in 0..buf.frames() {
-                            let mut max = 0.0f32;
-                            for plane in buf.planes().planes() {
-                                let sample = plane[i] as f32 / 32768.0;
-                                let val = sample.abs();
-                                max = max.max(val);
-                                peak = peak.max(val);
-                                sum_sq += (val as f64).powi(2);
-                                count += 1;
-                            }
-                            samples.push(max);
-                        }
-                    }
-                    AudioBufferRef::S24(buf) => {
-                        for i in 0..buf.frames() {
-                            let mut max = 0.0f32;
-                            for plane in buf.planes().planes() {
-                                let sample = plane[i].0 as f32 / 8388608.0;
-                                let val = sample.abs();
-                                max = max.max(val);
-                                peak = peak.max(val);
-                                sum_sq += (val as f64).powi(2);
-                                count += 1;
-                            }
-                            samples.push(max);
-                        }
-                    }
-                    AudioBufferRef::S32(buf) => {
-                        for i in 0..buf.frames() {
-                            let mut max = 0.0f32;
-                            for plane in buf.planes().planes() {
-                                let sample = plane[i] as f32 / 2147483648.0;
-                                let val = sample.abs();
-                                max = max.max(val);
-                                peak = peak.max(val);
-                                sum_sq += (val as f64).powi(2);
-                                count += 1;
-                            }
-                            samples.push(max);
-                        }
-                    }
-                    _ => {}
+                } else {
+                    // Fallback if total_frames is unknown (e.g. streaming or some MP3s)
+                    // We can't really do progressive bars easily here without knowing the total.
+                    // Just decode and report progress if possible.
+                    on_progress(0.0, None);
                 }
             }
             Err(symphonia::core::errors::Error::IoError(_)) => break,
@@ -531,7 +556,7 @@ where
         }
     }
 
-    if samples.is_empty() {
+    if decoded_frames == 0 {
         return None;
     }
 
@@ -541,24 +566,7 @@ where
         0.0
     };
 
-    let bars = 512;
-    let chunk_size = samples.len() / bars;
-    if chunk_size == 0 {
-        return None;
-    }
-
-    let mut result = Vec::with_capacity(bars);
-    for i in 0..bars {
-        let start = i * chunk_size;
-        let end = (i + 1) * chunk_size;
-        let mut max = 0.0f32;
-        for j in start..end {
-            if j < samples.len() {
-                max = max.max(samples[j]);
-            }
-        }
-        result.push((max * 255.0).min(255.0) as u8);
-    }
+    let result: Vec<u8> = current_bars.iter().map(|&v| (v * 255.0).min(255.0) as u8).collect();
 
     Some((result, peak, rms))
 }

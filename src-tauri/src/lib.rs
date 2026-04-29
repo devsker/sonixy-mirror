@@ -21,6 +21,7 @@ struct WaveformTask {
 struct WaveformProgress {
     id: String,
     progress: f32,
+    data: Option<Vec<u8>>,
 }
 
 struct WaveformQueue {
@@ -701,10 +702,11 @@ pub fn run() {
 
                             let task_id = task.id.clone();
                             let handle_clone = handle.clone();
-                            if let Some((waveform, _peak, _rms)) = collection::generate_waveform(&full_path, move |progress| {
+                            if let Some((waveform, _peak, _rms)) = collection::generate_waveform(&full_path, move |progress, data| {
                                 let _ = handle_clone.emit("waveform-progress", WaveformProgress {
                                     id: task_id.clone(),
                                     progress,
+                                    data,
                                 });
                             }) {
                                 if let Ok(conn) = collection::init_db(&folder_path) {

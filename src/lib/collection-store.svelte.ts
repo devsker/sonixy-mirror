@@ -40,6 +40,7 @@ class CollectionStore {
     processingFiles = $state<Set<string>>(new Set());
     currentlyProcessingIds = $state<Set<string>>(new Set());
     waveformProgress = $state<Record<string, number>>({});
+    partialWaveforms = $state<Record<string, number[]>>({});
     isDraggingFromApp = $state(false);
 
     // Filter & Sort State
@@ -124,12 +125,19 @@ class CollectionStore {
                 const id = event.payload as string;
                 this.currentlyProcessingIds.add(id);
                 this.currentlyProcessingIds = new Set(this.currentlyProcessingIds);
+                
+                // Clear old progress data when starting fresh
+                delete this.waveformProgress[id];
+                delete this.partialWaveforms[id];
             });
 
             // Listen for waveform progress
             listen('waveform-progress', (event) => {
-                const payload = event.payload as { id: string, progress: number };
+                const payload = event.payload as { id: string, progress: number, data?: number[] };
                 this.waveformProgress[payload.id] = payload.progress;
+                if (payload.data) {
+                    this.partialWaveforms[payload.id] = payload.data;
+                }
                 this.updateWaveformTaskProgress();
             });
 
@@ -150,7 +158,7 @@ class CollectionStore {
 
                 this.currentlyProcessingIds.delete(id);
                 this.currentlyProcessingIds = new Set(this.currentlyProcessingIds);
-                delete this.waveformProgress[id];
+                // Don't delete progress here anymore to avoid race conditions with fetching
 
                 const task = this.tasks.find(t => t.id === 'waveforms');
                 if (task && task.total !== undefined && task.completed !== undefined) {
