@@ -751,11 +751,18 @@ pub fn run() {
                 }
             });
 
-            for _ in 0..4 {
+            let worker_count = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4)
+                .min(8);
+            for _ in 0..worker_count {
                 let handle = handle.clone();
                 let queue = Arc::clone(&handle.state::<AppState>().waveform_queue);
 
                 std::thread::spawn(move || {
+                    // One DB connection per worker, reused across all tasks.
+                    let mut worker_conn: Option<(PathBuf, rusqlite::Connection)> = None;
+
                     loop {
                         let task = {
                             let Ok(mut tasks) = queue.tasks.lock() else { break; };
@@ -777,6 +784,12 @@ pub fn run() {
                         let Ok(folder_path) = handle.state::<AppState>().collection_path.lock().map(|g| g.clone()) else { break; };
 
                         if let Some(folder_path) = folder_path {
+                            // Re-open connection if collection path changed.
+                            let conn_valid = worker_conn.as_ref().map(|(p, _)| p == &folder_path).unwrap_or(false);
+                            if !conn_valid {
+                                worker_conn = collection::init_db(&folder_path).ok().map(|c| (folder_path.clone(), c));
+                            }
+
                             let full_path = folder_path.join(&task.relative_path);
 
                             match task.task_type {
@@ -795,7 +808,7 @@ pub fn run() {
                                     let task_id = task.id.clone();
                                     let handle_clone = handle.clone();
                                     let queue_clone = Arc::clone(&queue);
-                                    if let Some((waveform, _peak, _rms)) = collection::generate_waveform(&full_path, move |progress, data| {
+                                    if let Some(waveform) = collection::generate_waveform(&full_path, move |progress, data| {
                                         let mut guard = queue_clone.pause_mutex.lock().unwrap_or_else(|e| e.into_inner());
                                         while queue_clone.paused.load(Ordering::SeqCst) {
                                             guard = queue_clone.pause_cvar.wait(guard).unwrap_or_else(|e| e.into_inner());
@@ -807,7 +820,7 @@ pub fn run() {
                                             data,
                                         });
                                     }) {
-                                        if let Ok(conn) = collection::init_db(&folder_path) {
+                                        if let Some((_, conn)) = &worker_conn {
                                             let _ = conn.execute(
                                                 "INSERT OR REPLACE INTO waveforms (id, data) VALUES (?1, ?2)",
                                                 rusqlite::params![task.id, waveform],
@@ -831,7 +844,7 @@ pub fn run() {
                                 }
                                 TaskType::Convert { id } => {
                                     let _ = handle.emit("waveform-started", format!("{}-converting", id));
-                                    
+
                                     let id_clone = id.clone();
                                     let handle_clone = handle.clone();
                                     let queue_clone = Arc::clone(&queue);
@@ -849,11 +862,11 @@ pub fn run() {
                                     }) {
                                         Ok(new_path) => {
                                             let _ = std::fs::remove_file(&full_path);
-                                            
-                                            if let Ok(conn) = collection::init_db(&folder_path) {
+
+                                            if let Some((_, conn)) = &worker_conn {
                                                 let relative_path = new_path.strip_prefix(&folder_path).unwrap_or(&new_path);
                                                 let filepath_str = relative_path.to_string_lossy().to_string();
-                                                
+
                                                 if let Some(meta) = collection::extract_metadata(&new_path) {
                                                     let _ = conn.execute(
                                                         "UPDATE files SET filename = ?1, filepath = ?2, format = ?3, size = ?4, duration = ?5, length = ?6 WHERE id = ?7",

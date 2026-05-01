@@ -89,8 +89,6 @@
 	const waveformPath = $derived.by(() => {
 		if (data.length === 0) return '';
 		const spacing = 3;
-		let topPoints = '';
-		let bottomPoints = '';
 
 		// During calculation, only show bars up to the current progress
 		let lastIdx = data.length - 1;
@@ -100,22 +98,17 @@
 
 		if (lastIdx < 0) return '';
 
+		const topParts: string[] = [];
+		const bottomParts: string[] = [];
+
 		for (let i = 0; i <= lastIdx; i++) {
 			const x = i * spacing;
 			const h = getBarHeight(data[i]);
-			const yTop = 50 - h / 2;
-			const yBottom = 50 + h / 2;
-
-			if (i === 0) {
-				topPoints += `M ${x},${yTop} `;
-				bottomPoints = `L ${x},${yBottom}`;
-			} else {
-				topPoints += `L ${x},${yTop} `;
-				bottomPoints = `L ${x},${yBottom} ` + bottomPoints;
-			}
+			topParts.push(`${i === 0 ? 'M' : 'L'} ${x},${50 - h / 2} `);
+			bottomParts.push(`L ${x},${50 + h / 2} `);
 		}
 
-		return topPoints + bottomPoints + ' Z';
+		return topParts.join('') + bottomParts.reverse().join('') + 'Z';
 	});
 
 	const currentSelection = $derived.by(() => {

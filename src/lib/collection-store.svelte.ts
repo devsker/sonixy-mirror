@@ -140,13 +140,19 @@ class CollectionStore {
             });
 
             // Listen for waveform progress
+            // partialWaveforms is throttled to 50ms per file to limit SVG path rebuilds.
+            const lastPartialWrite: Record<string, number> = {};
             listen('waveform-progress', (event) => {
                 const payload = event.payload as { id: string, progress: number, data?: number[] };
                 this.waveformProgress[payload.id] = payload.progress;
                 if (payload.data) {
-                    this.partialWaveforms[payload.id] = payload.data;
+                    const now = Date.now();
+                    if ((now - (lastPartialWrite[payload.id] ?? 0)) >= 50) {
+                        this.partialWaveforms[payload.id] = payload.data;
+                        lastPartialWrite[payload.id] = now;
+                    }
                 }
-                
+
                 if (payload.id.endsWith('-converting')) {
                     this.updateConversionTaskProgress();
                 } else {

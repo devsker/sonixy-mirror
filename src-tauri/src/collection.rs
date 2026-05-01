@@ -6,7 +6,6 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use symphonia::core::audio::AudioBufferRef;
-use symphonia::core::audio::Signal;
 use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
@@ -460,7 +459,7 @@ pub fn trim_and_save(
     Ok(())
 }
 
-pub fn generate_waveform<F>(path: &Path, mut on_progress: F) -> Option<(Vec<u8>, f32, f32)>
+pub fn generate_waveform<F>(path: &Path, mut on_progress: F) -> Option<Vec<u8>>
 where
     F: FnMut(f32, Option<Vec<u8>>),
 {
@@ -472,7 +471,7 @@ where
     }
 
     let meta_opts = MetadataOptions::default();
-    let fmt_opts = FormatOptions::default();
+    let fmt_opts = FormatOptions { enable_gapless: false, ..Default::default() };
     let probed = symphonia::default::get_probe()
         .format(&hint, mss, &fmt_opts, &meta_opts)
         .ok()?;
@@ -486,19 +485,23 @@ where
     let total_frames = track.codec_params.n_frames;
     let mut decoded_frames = 0u64;
 
-    let dec_opts = DecoderOptions::default();
+    let dec_opts = DecoderOptions { verify: false };
     let mut decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &dec_opts)
         .ok()?;
 
     let track_id = track.id;
-    let mut peak = 0.0f32;
-    let mut sum_sq = 0.0f64;
-    let mut count = 0u64;
+    let bars: usize = 512;
+    let mut current_bars = vec![0.0f32; bars];
+    // Reused buffer for progress events — avoids 100 heap allocations per file.
+    let mut partial_data = vec![0u8; bars];
+
+    // Pre-compute bar start frames when total is known, eliminating per-sample division.
+    let bar_starts: Option<Vec<u64>> = total_frames.map(|total| {
+        (0..=bars).map(|b| (b as u64 * total) / bars as u64).collect()
+    });
 
     let mut last_progress = -1.0f32;
-    let bars = 512;
-    let mut current_bars = vec![0.0f32; bars];
 
     while let Ok(packet) = format.next_packet() {
         if packet.track_id() != track_id {
@@ -511,108 +514,52 @@ where
                 let start_frame = decoded_frames;
                 decoded_frames += frames as u64;
 
-                if let Some(total) = total_frames {
+                if let (Some(total), Some(bar_starts)) = (total_frames, &bar_starts) {
                     let progress = (decoded_frames as f32 / total as f32).min(1.0);
-                    
-                    // Update bars for these frames
+
+                    // Plane-first iteration for cache-friendly sequential reads.
+                    // Bar cursor advances monotonically (amortized O(1) per frame).
+                    macro_rules! process_planes {
+                        ($buf:expr, $convert:expr) => {{
+                            for plane in $buf.planes().planes() {
+                                let mut bar_cursor = {
+                                    let b = ((start_frame * bars as u64) / total) as usize;
+                                    b.min(bars - 1)
+                                };
+                                for i in 0..frames {
+                                    let frame_abs = start_frame + i as u64;
+                                    while bar_cursor + 1 < bars && frame_abs >= bar_starts[bar_cursor + 1] {
+                                        bar_cursor += 1;
+                                    }
+                                    let val: f32 = $convert(plane[i]);
+                                    current_bars[bar_cursor] = current_bars[bar_cursor].max(val);
+                                }
+                            }
+                        }};
+                    }
+
                     match buf_ref {
-                        AudioBufferRef::F32(buf) => {
-                            for i in 0..buf.frames() {
-                                let frame_idx = start_frame + i as u64;
-                                let bar_idx = ((frame_idx * bars as u64) / total).min(bars as u64 - 1) as usize;
-                                
-                                let mut max = 0.0f32;
-                                for plane in buf.planes().planes() {
-                                    let val = plane[i].abs();
-                                    max = max.max(val);
-                                    peak = peak.max(val);
-                                    sum_sq += (val as f64).powi(2);
-                                    count += 1;
-                                }
-                                current_bars[bar_idx] = current_bars[bar_idx].max(max);
-                            }
-                        }
-                        AudioBufferRef::U8(buf) => {
-                            for i in 0..buf.frames() {
-                                let frame_idx = start_frame + i as u64;
-                                let bar_idx = ((frame_idx * bars as u64) / total).min(bars as u64 - 1) as usize;
-                                
-                                let mut max = 0.0f32;
-                                for plane in buf.planes().planes() {
-                                    let sample = (plane[i] as f32 - 128.0) / 128.0;
-                                    let val = sample.abs();
-                                    max = max.max(val);
-                                    peak = peak.max(val);
-                                    sum_sq += (val as f64).powi(2);
-                                    count += 1;
-                                }
-                                current_bars[bar_idx] = current_bars[bar_idx].max(max);
-                            }
-                        }
-                        AudioBufferRef::S16(buf) => {
-                            for i in 0..buf.frames() {
-                                let frame_idx = start_frame + i as u64;
-                                let bar_idx = ((frame_idx * bars as u64) / total).min(bars as u64 - 1) as usize;
-                                
-                                let mut max = 0.0f32;
-                                for plane in buf.planes().planes() {
-                                    let sample = plane[i] as f32 / 32768.0;
-                                    let val = sample.abs();
-                                    max = max.max(val);
-                                    peak = peak.max(val);
-                                    sum_sq += (val as f64).powi(2);
-                                    count += 1;
-                                }
-                                current_bars[bar_idx] = current_bars[bar_idx].max(max);
-                            }
-                        }
+                        AudioBufferRef::F32(buf) => process_planes!(buf, |s: f32| s.abs()),
+                        AudioBufferRef::U8(buf) => process_planes!(buf, |s: u8| ((s as f32 - 128.0) / 128.0).abs()),
+                        AudioBufferRef::S16(buf) => process_planes!(buf, |s: i16| (s as f32 / 32768.0).abs()),
                         AudioBufferRef::S24(buf) => {
-                            for i in 0..buf.frames() {
-                                let frame_idx = start_frame + i as u64;
-                                let bar_idx = ((frame_idx * bars as u64) / total).min(bars as u64 - 1) as usize;
-                                
-                                let mut max = 0.0f32;
-                                for plane in buf.planes().planes() {
-                                    let sample = plane[i].0 as f32 / 8388608.0;
-                                    let val = sample.abs();
-                                    max = max.max(val);
-                                    peak = peak.max(val);
-                                    sum_sq += (val as f64).powi(2);
-                                    count += 1;
-                                }
-                                current_bars[bar_idx] = current_bars[bar_idx].max(max);
-                            }
+                            use symphonia::core::sample::i24;
+                            process_planes!(buf, |s: i24| (s.0 as f32 / 8388608.0).abs())
                         }
-                        AudioBufferRef::S32(buf) => {
-                            for i in 0..buf.frames() {
-                                let frame_idx = start_frame + i as u64;
-                                let bar_idx = ((frame_idx * bars as u64) / total).min(bars as u64 - 1) as usize;
-                                
-                                let mut max = 0.0f32;
-                                for plane in buf.planes().planes() {
-                                    let sample = plane[i] as f32 / 2147483648.0;
-                                    let val = sample.abs();
-                                    max = max.max(val);
-                                    peak = peak.max(val);
-                                    sum_sq += (val as f64).powi(2);
-                                    count += 1;
-                                }
-                                current_bars[bar_idx] = current_bars[bar_idx].max(max);
-                            }
-                        }
+                        AudioBufferRef::S32(buf) => process_planes!(buf, |s: i32| (s as f32 / 2147483648.0).abs()),
                         _ => {}
                     }
 
                     // Report progress every 1% change to avoid flooding
                     if (progress - last_progress).abs() >= 0.01 {
-                        let partial_data: Vec<u8> = current_bars.iter().map(|&v| (v * 255.0).min(255.0) as u8).collect();
-                        on_progress(progress, Some(partial_data));
+                        for (b, &v) in partial_data.iter_mut().zip(current_bars.iter()) {
+                            *b = (v * 255.0).min(255.0) as u8;
+                        }
+                        on_progress(progress, Some(partial_data.clone()));
                         last_progress = progress;
                     }
                 } else {
                     // Fallback if total_frames is unknown (e.g. streaming or some MP3s)
-                    // We can't really do progressive bars easily here without knowing the total.
-                    // Just decode and report progress if possible.
                     on_progress(0.0, None);
                 }
             }
@@ -626,14 +573,8 @@ where
         return None;
     }
 
-    let rms = if count > 0 {
-        (sum_sq / count as f64).sqrt() as f32
-    } else {
-        0.0
-    };
-
     let result: Vec<u8> = current_bars.iter().map(|&v| (v * 255.0).min(255.0) as u8).collect();
 
-    Some((result, peak, rms))
+    Some(result)
 }
 
