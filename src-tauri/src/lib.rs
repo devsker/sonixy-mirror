@@ -32,6 +32,9 @@ struct WaveformProgress {
 struct WaveformQueue {
     tasks: Mutex<VecDeque<WaveformTask>>,
     cvar: Condvar,
+    paused: AtomicBool,
+    pause_mutex: Mutex<()>,
+    pause_cvar: Condvar,
 }
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -681,6 +684,18 @@ async fn update_file_tags(
     Ok(item)
 }
 
+#[tauri::command]
+fn pause_processing(state: State<'_, AppState>) {
+    state.waveform_queue.paused.store(true, Ordering::SeqCst);
+}
+
+#[tauri::command]
+fn resume_processing(state: State<'_, AppState>) {
+    state.waveform_queue.paused.store(false, Ordering::SeqCst);
+    state.waveform_queue.cvar.notify_all();
+    state.waveform_queue.pause_cvar.notify_all();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let (stream, stream_handle) =
@@ -701,6 +716,9 @@ pub fn run() {
     let waveform_queue = Arc::new(WaveformQueue {
         tasks: Mutex::new(VecDeque::new()),
         cvar: Condvar::new(),
+        paused: AtomicBool::new(false),
+        pause_mutex: Mutex::new(()),
+        pause_cvar: Condvar::new(),
     });
 
     tauri::Builder::default()
@@ -741,17 +759,17 @@ pub fn run() {
                     loop {
                         let task = {
                             let Ok(mut tasks) = queue.tasks.lock() else { break; };
-                            while tasks.is_empty() {
+                            while tasks.is_empty() || queue.paused.load(Ordering::SeqCst) {
                                 tasks = match queue.cvar.wait(tasks) {
                                     Ok(t) => t,
                                     Err(_) => return,
                                 };
                             }
-                            
+
                             // Prioritize Convert tasks
                             let task_index = tasks.iter().position(|t| matches!(t.task_type, TaskType::Convert { .. }))
                                 .unwrap_or(0);
-                            
+
                             tasks.remove(task_index).unwrap()
                         };
 
@@ -776,7 +794,13 @@ pub fn run() {
 
                                     let task_id = task.id.clone();
                                     let handle_clone = handle.clone();
+                                    let queue_clone = Arc::clone(&queue);
                                     if let Some((waveform, _peak, _rms)) = collection::generate_waveform(&full_path, move |progress, data| {
+                                        let mut guard = queue_clone.pause_mutex.lock().unwrap_or_else(|e| e.into_inner());
+                                        while queue_clone.paused.load(Ordering::SeqCst) {
+                                            guard = queue_clone.pause_cvar.wait(guard).unwrap_or_else(|e| e.into_inner());
+                                        }
+                                        drop(guard);
                                         let _ = handle_clone.emit("waveform-progress", WaveformProgress {
                                             id: task_id.clone(),
                                             progress,
@@ -810,7 +834,13 @@ pub fn run() {
                                     
                                     let id_clone = id.clone();
                                     let handle_clone = handle.clone();
+                                    let queue_clone = Arc::clone(&queue);
                                     match collection::convert_to_mp3(&full_path, move |progress| {
+                                        let mut guard = queue_clone.pause_mutex.lock().unwrap_or_else(|e| e.into_inner());
+                                        while queue_clone.paused.load(Ordering::SeqCst) {
+                                            guard = queue_clone.pause_cvar.wait(guard).unwrap_or_else(|e| e.into_inner());
+                                        }
+                                        drop(guard);
                                         let _ = handle_clone.emit("waveform-progress", WaveformProgress {
                                             id: format!("{}-converting", id_clone),
                                             progress,
@@ -878,7 +908,9 @@ pub fn run() {
             get_audio_time,
             seek_audio,
             prepare_drag_clip,
-            update_file_tags
+            update_file_tags,
+            pause_processing,
+            resume_processing
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

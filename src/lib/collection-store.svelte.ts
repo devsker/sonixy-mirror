@@ -23,7 +23,7 @@ export interface Task {
     id: string;
     name: string;
     progress: number; // 0 to 100
-    status: 'pending' | 'running' | 'completed' | 'failed';
+    status: 'pending' | 'running' | 'paused' | 'completed' | 'failed';
     message?: string;
     total?: number;
     completed?: number;
@@ -37,6 +37,7 @@ class CollectionStore {
     loading = $state(false);
     pendingRelocate = $state<{id: string, path: string} | null>(null);
     tasks = $state<Task[]>([]);
+    processingPaused = $state(false);
     processingFiles = $state<Set<string>>(new Set());
     currentlyProcessingIds = $state<Set<string>>(new Set());
     waveformProgress = $state<Record<string, number>>({});
@@ -318,7 +319,7 @@ class CollectionStore {
             if (task.total !== undefined && task.completed !== undefined) {
                 task.progress = (task.completed / task.total) * 100;
             }
-            if ((statusChanged || updates.status) && (task.status === 'completed' || task.status === 'failed')) {
+            if (statusChanged && (task.status === 'completed' || task.status === 'failed')) {
                 setTimeout(() => this.removeTask(id), 5000);
             }
         }
@@ -576,6 +577,34 @@ class CollectionStore {
             }
         } catch (e) {
             console.error('Failed to regenerate waveforms', e);
+        }
+    }
+
+    async pauseProcessing() {
+        try {
+            await invoke('pause_processing');
+            this.processingPaused = true;
+            this.tasks.forEach(t => {
+                if (t.status === 'running' || t.status === 'pending') {
+                    t.status = 'paused';
+                }
+            });
+        } catch (e) {
+            console.error('Failed to pause processing', e);
+        }
+    }
+
+    async resumeProcessing() {
+        try {
+            await invoke('resume_processing');
+            this.processingPaused = false;
+            this.tasks.forEach(t => {
+                if (t.status === 'paused') {
+                    t.status = 'running';
+                }
+            });
+        } catch (e) {
+            console.error('Failed to resume processing', e);
         }
     }
 

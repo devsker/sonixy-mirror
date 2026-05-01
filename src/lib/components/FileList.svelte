@@ -26,6 +26,7 @@
 	let processingFiles = $derived(collectionStore.processingFiles);
 	let currentlyProcessingIds = $derived(collectionStore.currentlyProcessingIds);
 	let waveformProgress = $derived(collectionStore.waveformProgress);
+	let processingPaused = $derived(collectionStore.processingPaused);
 
 	let selectedIds = $derived(files.filter((f) => f.selected).map((f) => f.id));
 
@@ -532,7 +533,7 @@
 							<td class="filename-col" title={file.filename}>
 								<div class="name-wrapper">
 									{#if processingFiles.has(file.id)}
-										<span class="processing-icon" class:queued={!currentlyProcessingIds.has(file.id)} title={currentlyProcessingIds.has(file.id) ? "Processing..." : "Queued"}>
+										<span class="processing-icon" class:queued={!currentlyProcessingIds.has(file.id)} class:paused={processingPaused} title={currentlyProcessingIds.has(file.id) ? "Processing..." : "Queued"}>
 											{#if currentlyProcessingIds.has(file.id)}
 												{@const progress = waveformProgress[file.id] || 0}
 												<svg class="progress-circle" viewBox="0 0 16 16">
@@ -824,6 +825,10 @@
 		align-items: center;
 		min-width: 14px;
 		justify-content: center;
+	}
+
+	.processing-icon.paused {
+		color: var(--warning-color, #eab308);
 	}
 
 	.playing-icon {
