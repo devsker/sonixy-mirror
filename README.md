@@ -10,20 +10,6 @@
 
 Sonixy is a high-performance desktop application designed for audio enthusiasts and creators who need a fast, reliable way to manage and audition their audio collections. Built with **Tauri**, **Svelte 5**, and **Rust**, it combines the speed of native code with a refined, modern user interface.
 
-## Key Features
-
-- **High-Performance Scanning**: Parallel metadata extraction using Rust, capable of indexing thousands of files in seconds.
-- **Smart Collection**: SQLite-backed library with advanced filtering by format, tags, and more.
-- **Audio Utilities**: 
-  - **Normalization**: EBU R128 (-16 LUFS) normalization to keep your library consistent.
-  - **Precision Trimming**: Quick, lossless trimming of audio files.
-- **Metadata Management**: Easily add and manage genre tags and other metadata.
-- **Modern UX**: 
-  - Frameless, high-performance UI.
-  - Drag-and-drop support (into and out of the app).
-  - Customizable column layouts and sorting.
-  - Dark mode support.
-
 ## Getting Started
 
 ### Prerequisites
