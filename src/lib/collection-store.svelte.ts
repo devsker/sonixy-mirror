@@ -247,7 +247,7 @@ class CollectionStore {
             .filter(([id]) => !id.endsWith('-converting'))
             .reduce((acc, [_, p]) => acc + p, 0);
 
-        const accurateCompleted = task.completed + currentFilesProgress;
+        const accurateCompleted = Math.min(task.completed + currentFilesProgress, task.total);
         task.progress = (accurateCompleted / task.total) * 100;
         const etaMessage = task.status !== 'paused' ? this.computeEtaMessage(task, accurateCompleted) : '';
         task.eta = etaMessage || undefined;
@@ -262,7 +262,7 @@ class CollectionStore {
             .filter(([id]) => id.endsWith('-converting'))
             .reduce((acc, [_, p]) => acc + p, 0);
 
-        const accurateCompleted = task.completed + currentFilesProgress;
+        const accurateCompleted = Math.min(task.completed + currentFilesProgress, task.total);
         task.progress = (accurateCompleted / task.total) * 100;
         const etaMessage = task.status !== 'paused' ? this.computeEtaMessage(task, accurateCompleted) : '';
         task.eta = etaMessage || undefined;
