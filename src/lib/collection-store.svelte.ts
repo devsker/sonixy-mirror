@@ -129,6 +129,10 @@ class CollectionStore {
                 // Clear old progress data when starting fresh
                 delete this.waveformProgress[id];
                 delete this.partialWaveforms[id];
+
+                if (id.endsWith('-converting')) {
+                    this.updateConversionTaskProgress();
+                }
             });
 
             // Listen for waveform progress
@@ -138,7 +142,12 @@ class CollectionStore {
                 if (payload.data) {
                     this.partialWaveforms[payload.id] = payload.data;
                 }
-                this.updateWaveformTaskProgress();
+                
+                if (payload.id.endsWith('-converting')) {
+                    this.updateConversionTaskProgress();
+                } else {
+                    this.updateWaveformTaskProgress();
+                }
             });
 
             // Listen for waveform generation
@@ -147,25 +156,38 @@ class CollectionStore {
                 const id = payload.id;
                 const gain = payload.gain;
                 
-                // Update file gain in store
-                const file = this.files.find(f => f.id === id);
-                if (file) {
-                    file.gain = gain;
-                }
+                if (id.endsWith('-converting')) {
+                    const task = this.tasks.find(t => t.id === 'conversions');
+                    if (task && task.completed !== undefined) {
+                        task.completed++;
+                        this.updateConversionTaskProgress();
+                        if (task.completed >= (task.total || 0)) {
+                            this.updateTask(task.id, { status: 'completed' });
+                        }
+                    }
 
-                this.processingFiles.delete(id);
-                this.processingFiles = new Set(this.processingFiles); // Trigger reactivity
+                    // Refresh file list to see the new MP3
+                    this.refresh();
+                } else {
+                    // Update file gain in store
+                    const file = this.files.find(f => f.id === id);
+                    if (file) {
+                        file.gain = gain;
+                    }
 
-                this.currentlyProcessingIds.delete(id);
-                this.currentlyProcessingIds = new Set(this.currentlyProcessingIds);
-                // Don't delete progress here anymore to avoid race conditions with fetching
+                    this.processingFiles.delete(id);
+                    this.processingFiles = new Set(this.processingFiles); // Trigger reactivity
 
-                const task = this.tasks.find(t => t.id === 'waveforms');
-                if (task && task.total !== undefined && task.completed !== undefined) {
-                    task.completed++;
-                    this.updateWaveformTaskProgress();
-                    if (task.completed >= task.total) {
-                        this.updateTask(task.id, { status: 'completed', eta: undefined });
+                    this.currentlyProcessingIds.delete(id);
+                    this.currentlyProcessingIds = new Set(this.currentlyProcessingIds);
+
+                    const task = this.tasks.find(t => t.id === 'waveforms');
+                    if (task && task.total !== undefined && task.completed !== undefined) {
+                        task.completed++;
+                        this.updateWaveformTaskProgress();
+                        if (task.completed >= task.total) {
+                            this.updateTask(task.id, { status: 'completed', eta: undefined });
+                        }
                     }
                 }
             });
@@ -176,7 +198,10 @@ class CollectionStore {
         const task = this.tasks.find(t => t.id === 'waveforms');
         if (!task || task.total === undefined || task.completed === undefined) return;
 
-        const currentFilesProgress = Object.values(this.waveformProgress).reduce((acc, p) => acc + p, 0);
+        const currentFilesProgress = Object.entries(this.waveformProgress)
+            .filter(([id]) => !id.endsWith('-converting'))
+            .reduce((acc, [_, p]) => acc + p, 0);
+
         const accurateCompleted = task.completed + currentFilesProgress;
         task.progress = (accurateCompleted / task.total) * 100;
         
@@ -188,19 +213,13 @@ class CollectionStore {
             const remainingSeconds = remainingItems / itemsPerSecond;
             
             if (remainingSeconds > 0) {
-                // Smooth the ETA using exponential moving average
-                // We use task.progress as a proxy for how much weight to give the current estimate if we wanted,
-                // but a simple alpha is usually better.
                 let smoothedSeconds = remainingSeconds;
                 if (task.eta) {
-                    // Extract existing numeric value if possible
                     const match = task.message?.match(/(\d+)m\s*(\d+)s|(\d+)s/);
                     if (match) {
                         let prevSeconds = 0;
                         if (match[3]) prevSeconds = parseInt(match[3]);
                         else prevSeconds = parseInt(match[1]) * 60 + parseInt(match[2]);
-                        
-                        // Alpha of 0.05 for high smoothing
                         smoothedSeconds = prevSeconds * 0.95 + remainingSeconds * 0.05;
                     }
                 }
@@ -217,6 +236,71 @@ class CollectionStore {
         }
         
         task.message = `${task.completed} / ${task.total} waveforms${etaMessage}`;
+    }
+
+    private updateConversionTaskProgress() {
+        const task = this.tasks.find(t => t.id === 'conversions');
+        if (!task || task.total === undefined || task.completed === undefined) return;
+
+        const currentFilesProgress = Object.entries(this.waveformProgress)
+            .filter(([id]) => id.endsWith('-converting'))
+            .reduce((acc, [_, p]) => acc + p, 0);
+            
+        const accurateCompleted = task.completed + currentFilesProgress;
+        task.progress = (accurateCompleted / task.total) * 100;
+        task.message = `Standardizing ${task.completed} / ${task.total} files...`;
+    }
+
+    private handleCollectionResult(result: { files: Omit<FileItem, 'selected'>[], waveform_ids: string[], conversion_ids: string[] }) {
+        this.files = result.files.map(f => ({ ...f, selected: false }));
+        
+        // All these IDs will eventually need a waveform
+        const allProcessingIds = [...result.waveform_ids, ...result.conversion_ids];
+        if (allProcessingIds.length > 0) {
+            allProcessingIds.forEach(id => this.processingFiles.add(id));
+            this.processingFiles = new Set(this.processingFiles);
+        }
+
+        if (result.conversion_ids.length > 0) {
+            let task = this.tasks.find(t => t.id === 'conversions');
+            if (task) {
+                task.total = (task.total || 0) + result.conversion_ids.length;
+                task.status = 'running';
+                this.updateConversionTaskProgress();
+            } else {
+                this.addTask({
+                    id: 'conversions',
+                    name: 'Converting unsupported formats to supported ones',
+                    progress: 0,
+                    status: 'running',
+                    total: result.conversion_ids.length,
+                    completed: 0,
+                    message: `Standardizing 0 / ${result.conversion_ids.length} files...`
+                });
+            }
+        }
+
+        const totalWaveformsNeeded = result.waveform_ids.length + result.conversion_ids.length;
+        if (totalWaveformsNeeded > 0) {
+            let task = this.tasks.find(t => t.id === 'waveforms');
+            if (task) {
+                task.total = (task.total || 0) + totalWaveformsNeeded;
+                task.status = 'running';
+                if (!task.startTime) task.startTime = Date.now();
+                this.updateWaveformTaskProgress();
+            } else {
+                this.addTask({
+                    id: 'waveforms',
+                    name: 'Generating Waveforms',
+                    progress: 0,
+                    status: 'running',
+                    total: totalWaveformsNeeded,
+                    completed: 0,
+                    startTime: Date.now(),
+                    message: `0 / ${totalWaveformsNeeded} waveforms`
+                });
+            }
+        }
     }
 
     addTask(task: Task) {
@@ -244,31 +328,19 @@ class CollectionStore {
         this.tasks = this.tasks.filter(t => t.id !== id);
     }
 
+    isLocked(id: string) {
+        return this.processingFiles.has(id);
+    }
+
     async openCollectionByPath(path: string) {
         try {
             audioPlayer.stop();
             this.loading = true;
             this.collectionPath = path;
             this.processingFiles = new Set();
-            const [files, missingWaveforms] = await invoke<[Omit<FileItem, 'selected'>[], string[]]>('open_collection', { path });
-            this.files = files.map(f => ({ ...f, selected: false }));
+            const result = await invoke<{ files: Omit<FileItem, 'selected'>[], waveform_ids: string[], conversion_ids: string[] }>('open_collection', { path });
+            this.handleCollectionResult(result);
             localStorage.setItem('lastCollectionPath', path);
-            
-            if (missingWaveforms.length > 0) {
-                missingWaveforms.forEach(id => this.processingFiles.add(id));
-                this.processingFiles = new Set(this.processingFiles);
-
-                this.addTask({
-                    id: 'waveforms',
-                    name: 'Generating Waveforms',
-                    progress: 0,
-                    status: 'running',
-                    total: missingWaveforms.length,
-                    completed: 0,
-                    startTime: Date.now(),
-                    message: `0 / ${missingWaveforms.length} waveforms`
-                });
-            }
         } catch (e) {
             console.error('Failed to auto-open collection', e);
             this.collectionPath = null;
@@ -319,38 +391,13 @@ class CollectionStore {
 
         try {
             this.loading = true;
-            const [files, missingWaveforms] = await invoke<[Omit<FileItem, 'selected'>[], string[]]>('add_files_to_collection', { 
+            const result = await invoke<{ files: Omit<FileItem, 'selected'>[], waveform_ids: string[], conversion_ids: string[] }>('add_files_to_collection', { 
                 files: filePaths, 
                 action,
                 normalize
             });
-            this.files = files.map(f => ({ ...f, selected: false }));
+            this.handleCollectionResult(result);
             this.updateTask(taskId, { progress: 100, status: 'completed' });
-
-            if (missingWaveforms.length > 0) {
-                missingWaveforms.forEach(id => this.processingFiles.add(id));
-                this.processingFiles = new Set(this.processingFiles);
-
-                let task = this.tasks.find(t => t.id === 'waveforms');
-                if (task) {
-                    task.total = (task.total || 0) + missingWaveforms.length;
-                    task.completed = (task.completed || 0);
-                    task.status = 'running';
-                    if (!task.startTime) task.startTime = Date.now();
-                    this.updateWaveformTaskProgress();
-                } else {
-                    this.addTask({
-                        id: 'waveforms',
-                        name: 'Generating Waveforms',
-                        progress: 0,
-                        status: 'running',
-                        total: missingWaveforms.length,
-                        completed: 0,
-                        startTime: Date.now(),
-                        message: `0 / ${missingWaveforms.length} waveforms`
-                    });
-                }
-            }
         } catch (e) {
             console.error('Failed to add files', e);
             this.updateTask(taskId, { status: 'failed', message: (e as Error).message });
@@ -360,6 +407,7 @@ class CollectionStore {
     }
 
     async relocateFile(id: string) {
+        if (this.isLocked(id)) return;
         try {
             const selected = await open({
                 multiple: false,
@@ -427,6 +475,7 @@ class CollectionStore {
     }
 
     async removeFromCollectionOnly(id: string) {
+        if (this.isLocked(id)) return;
         const file = this.files.find(f => f.id === id);
         const taskId = Math.random().toString(36).substring(7);
         this.addTask({
@@ -450,6 +499,7 @@ class CollectionStore {
     }
 
     async removeFileFromDisk(id: string) {
+        if (this.isLocked(id)) return;
         const file = this.files.find(f => f.id === id);
         if (!file || !this.collectionPath) {
             console.error('removeFileFromDisk: File or collectionPath missing', { file, path: this.collectionPath });
@@ -530,6 +580,7 @@ class CollectionStore {
     }
 
     async updateTags(id: string, tags: string[]) {
+        if (this.isLocked(id)) return;
         try {
             const updatedItem = await invoke<Omit<FileItem, 'selected'>>('update_file_tags', { id, tags });
             const index = this.files.findIndex(f => f.id === id);

@@ -29,6 +29,7 @@
 	let isDragging = $state(false);
 	let dragClipPath = $state<string | null>(null);
 	let isPreparingClip = $state(false);
+	let isLocked = $derived(collectionStore.isLocked(id));
 
 	async function fetchWaveform() {
 		if (!id) {
@@ -132,7 +133,7 @@
 	});
 
 	function onMouseDown(e: MouseEvent) {
-		if (e.button !== 0) return;
+		if (e.button !== 0 || isLocked) return;
 		// Don't start a new selection if clicking on the existing one to drag it
 		if ((e.target as Element).closest('.selection-rect')) return;
 
@@ -231,6 +232,7 @@
 		preserveAspectRatio="none"
 		class="waveform-svg"
 		class:hidden={!waveformData && !isLoading}
+		class:locked={isLocked}
 		onmousedown={onMouseDown}
 		role="presentation"
 	>
@@ -343,6 +345,12 @@
 
 	.waveform-svg.hidden {
 		opacity: 0;
+	}
+
+	.waveform-svg.locked {
+		opacity: 0.5;
+		filter: grayscale(0.5);
+		cursor: wait;
 	}
 
 	.waveform-path {

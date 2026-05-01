@@ -11,10 +11,15 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager, State};
 
+enum TaskType {
+    Waveform { normalize: bool },
+    Convert { id: String },
+}
+
 struct WaveformTask {
     id: String,
     relative_path: String,
-    normalize: bool,
+    task_type: TaskType,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -47,6 +52,13 @@ struct AppState {
     audio: AudioState,
 }
 
+#[derive(serde::Serialize)]
+struct CollectionResult {
+    files: Vec<FileItem>,
+    waveform_ids: Vec<String>,
+    conversion_ids: Vec<String>,
+}
+
 fn queue_missing_waveforms(
     folder_path: &PathBuf,
     queue: &Arc<WaveformQueue>,
@@ -54,9 +66,9 @@ fn queue_missing_waveforms(
 ) -> Result<Vec<String>, String> {
     let conn = collection::init_db(folder_path).map_err(|e| e.to_string())?;
 
-    // Find files that don't have a waveform yet
+    // Find files that don't have a waveform yet AND are not OGG/OGA (which need conversion first)
     let mut stmt = conn
-        .prepare("SELECT id, filepath FROM files WHERE id NOT IN (SELECT id FROM waveforms)")
+        .prepare("SELECT id, filepath FROM files WHERE id NOT IN (SELECT id FROM waveforms) AND LOWER(format) NOT IN ('ogg', 'oga')")
         .map_err(|e| e.to_string())?;
 
     let missing_iter = stmt
@@ -78,7 +90,7 @@ fn queue_missing_waveforms(
                 tasks.push_back(WaveformTask {
                     id,
                     relative_path,
-                    normalize,
+                    task_type: TaskType::Waveform { normalize },
                 });
             }
         }
@@ -91,14 +103,14 @@ fn queue_missing_waveforms(
 async fn open_collection(
     path: String,
     state: State<'_, AppState>,
-) -> Result<(Vec<FileItem>, Vec<String>), String> {
+) -> Result<CollectionResult, String> {
     let folder_path = PathBuf::from(&path);
     if !folder_path.exists() || !folder_path.is_dir() {
         return Err("Invalid folder path".to_string());
     }
 
     let conn = collection::init_db(&folder_path).map_err(|e| e.to_string())?;
-    collection::scan_folder(&folder_path, &conn).map_err(|e| e.to_string())?;
+    let conversion_needed = collection::scan_folder(&folder_path, &conn).map_err(|e| e.to_string())?;
     let files = collection::get_all_files(&folder_path, &conn).map_err(|e| e.to_string())?;
 
     {
@@ -109,13 +121,30 @@ async fn open_collection(
         *state_path = Some(folder_path.clone());
     }
 
-    // Queue missing waveforms in background (default no normalize for existing files unless requested?)
-    // Actually, if they are missing waveforms, they might also need normalization check.
-    // But let's keep it simple: open_collection doesn't re-normalize.
-    let missing_ids =
+    let mut conversion_ids = Vec::new();
+    // Queue conversion tasks
+    if !conversion_needed.is_empty() {
+        let mut tasks = state.waveform_queue.tasks.lock().map_err(|_| "State poisoned")?;
+        for (id, relative_path) in conversion_needed {
+            conversion_ids.push(id.clone());
+            tasks.push_back(WaveformTask {
+                id: id.clone(),
+                relative_path,
+                task_type: TaskType::Convert { id },
+            });
+        }
+        state.waveform_queue.cvar.notify_all();
+    }
+
+    // Queue missing waveforms in background
+    let waveform_ids =
         queue_missing_waveforms(&folder_path, &state.waveform_queue, false).unwrap_or_default();
 
-    Ok((files, missing_ids))
+    Ok(CollectionResult {
+        files,
+        waveform_ids,
+        conversion_ids,
+    })
 }
 
 #[tauri::command]
@@ -162,7 +191,7 @@ fn get_waveform(id: String, state: State<'_, AppState>) -> Result<Option<Vec<u8>
             tasks.push_front(WaveformTask {
                 id,
                 relative_path,
-                normalize: false,
+                task_type: TaskType::Waveform { normalize: false },
             });
             state.waveform_queue.cvar.notify_all();
         }
@@ -210,8 +239,21 @@ async fn relocate_file(
     let relative_path = dest_path
         .strip_prefix(folder_path)
         .map_err(|_| "Path calculation error")?;
-    collection::update_file_path(&id, &relative_path.to_string_lossy(), &conn)
+    let filepath_str = relative_path.to_string_lossy().to_string();
+    collection::update_file_path(&id, &filepath_str, &conn)
         .map_err(|e| e.to_string())?;
+
+    // Check if it needs conversion
+    let ext = dest_path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    if (ext == "ogg" || ext == "oga") && action != "link" {
+        let mut tasks = state.waveform_queue.tasks.lock().map_err(|_| "State poisoned")?;
+        tasks.push_back(WaveformTask {
+            id: id.clone(),
+            relative_path: filepath_str,
+            task_type: TaskType::Convert { id: id.clone() },
+        });
+        state.waveform_queue.cvar.notify_all();
+    }
 
     let files = collection::get_all_files(folder_path, &conn).map_err(|e| e.to_string())?;
     Ok(files)
@@ -241,7 +283,7 @@ async fn add_files_to_collection(
     action: String,
     normalize: bool,
     state: State<'_, AppState>,
-) -> Result<(Vec<FileItem>, Vec<String>), String> {
+) -> Result<CollectionResult, String> {
     let state_path = state
         .collection_path
         .lock()
@@ -295,6 +337,9 @@ async fn add_files_to_collection(
     let mut conn = collection::init_db(folder_path).map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
+    let mut conversion_tasks = Vec::new();
+    let mut conversion_ids = Vec::new();
+
     for item_res in processed_items {
         if let Ok(item) = item_res {
             tx.execute(
@@ -311,16 +356,39 @@ async fn add_files_to_collection(
                     item.gain
                 ],
             ).map_err(|e| e.to_string())?;
+
+            let ext = item.format.to_lowercase();
+            if ext == "ogg" || ext == "oga" {
+                conversion_ids.push(item.id.clone());
+                conversion_tasks.push(WaveformTask {
+                    id: item.id.clone(),
+                    relative_path: item.filepath.clone(),
+                    task_type: TaskType::Convert { id: item.id.clone() },
+                });
+            }
         }
     }
     tx.commit().map_err(|e| e.to_string())?;
 
+    // Add conversion tasks to queue
+    if !conversion_tasks.is_empty() {
+        let mut tasks = state.waveform_queue.tasks.lock().map_err(|_| "State poisoned")?;
+        for task in conversion_tasks {
+            tasks.push_back(task);
+        }
+        state.waveform_queue.cvar.notify_all();
+    }
+
     // Queue missing waveforms
-    let missing_ids =
+    let waveform_ids =
         queue_missing_waveforms(folder_path, &state.waveform_queue, normalize).unwrap_or_default();
 
     let files = collection::get_all_files(folder_path, &conn).map_err(|e| e.to_string())?;
-    Ok((files, missing_ids))
+    Ok(CollectionResult {
+        files,
+        waveform_ids,
+        conversion_ids,
+    })
 }
 
 #[tauri::command]
@@ -679,8 +747,12 @@ pub fn run() {
                                     Err(_) => return,
                                 };
                             }
-                            let Some(task) = tasks.pop_front() else { continue; };
-                            task
+                            
+                            // Prioritize Convert tasks
+                            let task_index = tasks.iter().position(|t| matches!(t.task_type, TaskType::Convert { .. }))
+                                .unwrap_or(0);
+                            
+                            tasks.remove(task_index).unwrap()
                         };
 
                         // Get collection path
@@ -689,49 +761,95 @@ pub fn run() {
                         if let Some(folder_path) = folder_path {
                             let full_path = folder_path.join(&task.relative_path);
 
-                            // Perform destructive normalization if requested
-                            if task.normalize {
-                                let _ = handle.emit("waveform-started", format!("{}-normalizing", task.id));
-                                if let Err(e) = collection::normalize_file_destructive(&full_path) {
-                                    eprintln!("Destructive normalization failed for {}: {}", task.id, e);
-                                }
-                            }
-
-                            // Emit started event
-                            let _ = handle.emit("waveform-started", task.id.clone());
-
-                            let task_id = task.id.clone();
-                            let handle_clone = handle.clone();
-                            if let Some((waveform, _peak, _rms)) = collection::generate_waveform(&full_path, move |progress, data| {
-                                let _ = handle_clone.emit("waveform-progress", WaveformProgress {
-                                    id: task_id.clone(),
-                                    progress,
-                                    data,
-                                });
-                            }) {
-                                if let Ok(conn) = collection::init_db(&folder_path) {
-                                    let _ = conn.execute(
-                                        "INSERT OR REPLACE INTO waveforms (id, data) VALUES (?1, ?2)",
-                                        rusqlite::params![task.id, waveform],
-                                    );
-
-                                    // Since it's destructive normalization, the file is already at the target level.
-                                    // We set gain to 1.0 in the DB because we don't need additional playback gain.
-                                    // However, we still might want to re-extract metadata (size, duration might change slightly)
-                                    if task.normalize {
-                                        if let Some(meta) = collection::extract_metadata(&full_path) {
-                                             let _ = conn.execute(
-                                                "UPDATE files SET size = ?1, duration = ?2, length = ?3, gain = 1.0 WHERE id = ?4",
-                                                rusqlite::params![meta.size, meta.duration, meta.length, task.id],
-                                            );
+                            match task.task_type {
+                                TaskType::Waveform { normalize } => {
+                                    // Perform destructive normalization if requested
+                                    if normalize {
+                                        let _ = handle.emit("waveform-started", format!("{}-normalizing", task.id));
+                                        if let Err(e) = collection::normalize_file_destructive(&full_path) {
+                                            eprintln!("Destructive normalization failed for {}: {}", task.id, e);
                                         }
                                     }
 
-                                    // Emit event
-                                    let _ = handle.emit("waveform-generated", serde_json::json!({
-                                        "id": task.id,
-                                        "gain": 1.0
-                                    }));
+                                    // Emit started event
+                                    let _ = handle.emit("waveform-started", task.id.clone());
+
+                                    let task_id = task.id.clone();
+                                    let handle_clone = handle.clone();
+                                    if let Some((waveform, _peak, _rms)) = collection::generate_waveform(&full_path, move |progress, data| {
+                                        let _ = handle_clone.emit("waveform-progress", WaveformProgress {
+                                            id: task_id.clone(),
+                                            progress,
+                                            data,
+                                        });
+                                    }) {
+                                        if let Ok(conn) = collection::init_db(&folder_path) {
+                                            let _ = conn.execute(
+                                                "INSERT OR REPLACE INTO waveforms (id, data) VALUES (?1, ?2)",
+                                                rusqlite::params![task.id, waveform],
+                                            );
+
+                                            if normalize {
+                                                if let Some(meta) = collection::extract_metadata(&full_path) {
+                                                    let _ = conn.execute(
+                                                        "UPDATE files SET size = ?1, duration = ?2, length = ?3, gain = 1.0 WHERE id = ?4",
+                                                        rusqlite::params![meta.size, meta.duration, meta.length, task.id],
+                                                    );
+                                                }
+                                            }
+
+                                            let _ = handle.emit("waveform-generated", serde_json::json!({
+                                                "id": task.id,
+                                                "gain": 1.0
+                                            }));
+                                        }
+                                    }
+                                }
+                                TaskType::Convert { id } => {
+                                    let _ = handle.emit("waveform-started", format!("{}-converting", id));
+                                    
+                                    let id_clone = id.clone();
+                                    let handle_clone = handle.clone();
+                                    match collection::convert_to_mp3(&full_path, move |progress| {
+                                        let _ = handle_clone.emit("waveform-progress", WaveformProgress {
+                                            id: format!("{}-converting", id_clone),
+                                            progress,
+                                            data: None,
+                                        });
+                                    }) {
+                                        Ok(new_path) => {
+                                            let _ = std::fs::remove_file(&full_path);
+                                            
+                                            if let Ok(conn) = collection::init_db(&folder_path) {
+                                                let relative_path = new_path.strip_prefix(&folder_path).unwrap_or(&new_path);
+                                                let filepath_str = relative_path.to_string_lossy().to_string();
+                                                
+                                                if let Some(meta) = collection::extract_metadata(&new_path) {
+                                                    let _ = conn.execute(
+                                                        "UPDATE files SET filename = ?1, filepath = ?2, format = ?3, size = ?4, duration = ?5, length = ?6 WHERE id = ?7",
+                                                        rusqlite::params![meta.filename, filepath_str, meta.format, meta.size, meta.duration, meta.length, id],
+                                                    );
+                                                }
+                                            }
+
+                                            let _ = handle.emit("waveform-generated", serde_json::json!({
+                                                "id": format!("{}-converting", id),
+                                                "gain": 1.0
+                                            }));
+
+                                            // Now queue waveform generation for the new file
+                                            let mut tasks = queue.tasks.lock().unwrap();
+                                            tasks.push_back(WaveformTask {
+                                                id: id.clone(),
+                                                relative_path: new_path.strip_prefix(&folder_path).unwrap_or(&new_path).to_string_lossy().to_string(),
+                                                task_type: TaskType::Waveform { normalize: false },
+                                            });
+                                            queue.cvar.notify_all();
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Conversion failed for {}: {}", id, e);
+                                        }
+                                    }
                                 }
                             }
                         }

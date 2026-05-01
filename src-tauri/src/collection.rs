@@ -4,7 +4,7 @@ use lofty::probe::Probe;
 use lofty::tag::{Accessor, Tag};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use symphonia::core::audio::AudioBufferRef;
 use symphonia::core::audio::Signal;
 use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
@@ -200,7 +200,7 @@ pub fn update_tags(
 
 use rayon::prelude::*;
 
-pub fn scan_folder(folder_path: &Path, conn: &Connection) -> rusqlite::Result<()> {
+pub fn scan_folder(folder_path: &Path, conn: &Connection) -> rusqlite::Result<Vec<(String, String)>> {
     // 1. Get all file paths that are not hidden
     let entries: Vec<_> = WalkDir::new(folder_path)
         .into_iter()
@@ -228,7 +228,7 @@ pub fn scan_folder(folder_path: &Path, conn: &Connection) -> rusqlite::Result<()
     }
 
     if files_to_scan.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     // 3. Extract metadata in parallel
@@ -249,6 +249,8 @@ pub fn scan_folder(folder_path: &Path, conn: &Connection) -> rusqlite::Result<()
     mut_conn.busy_timeout(std::time::Duration::from_secs(5))?;
     let tx = mut_conn.transaction()?;
 
+    let mut conversion_needed = Vec::new();
+
     for item in processed_items {
         tx.execute(
             "INSERT INTO files (id, filename, filepath, format, length, duration, size, tags, gain) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -264,10 +266,15 @@ pub fn scan_folder(folder_path: &Path, conn: &Connection) -> rusqlite::Result<()
                 item.gain
             ],
         )?;
+
+        let ext = item.format.to_lowercase();
+        if ext == "ogg" || ext == "oga" {
+            conversion_needed.push((item.id, item.filepath));
+        }
     }
     tx.commit()?;
 
-    Ok(())
+    Ok(conversion_needed)
 }
 
 pub fn get_all_files(folder_path: &Path, conn: &Connection) -> rusqlite::Result<Vec<FileItem>> {
@@ -321,7 +328,66 @@ pub fn update_file_path(
     Ok(())
 }
 
-use std::process::Command;
+use std::io::BufRead;
+use std::process::{Command, Stdio};
+
+pub fn convert_to_mp3<F>(path: &Path, mut on_progress: F) -> Result<PathBuf, String>
+where
+    F: FnMut(f32),
+{
+    let mut mp3_path = path.to_path_buf();
+    mp3_path.set_extension("mp3");
+
+    // If the file is already an mp3, we don't need to do anything
+    if path.extension().and_then(|e| e.to_str()).map(|s| s.to_lowercase()) == Some("mp3".to_string()) {
+        return Ok(mp3_path);
+    }
+
+    // Get total duration first for progress calculation
+    let total_duration = match Probe::open(path).ok().and_then(|p| p.read().ok()) {
+        Some(tagged_file) => tagged_file.properties().duration().as_secs_f32(),
+        None => 0.0,
+    };
+
+    let mut child = Command::new("ffmpeg")
+        .arg("-i")
+        .arg(path)
+        .arg("-codec:a")
+        .arg("libmp3lame")
+        .arg("-qscale:a")
+        .arg("2") // High quality
+        .arg("-progress")
+        .arg("pipe:2") // Send progress to stderr
+        .arg("-y") // Overwrite if exists
+        .arg(&mp3_path)
+        .stderr(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Failed to execute ffmpeg: {}", e))?;
+
+    let stderr = child.stderr.take().ok_or("Failed to open stderr")?;
+    let reader = std::io::BufReader::new(stderr);
+
+    for line in reader.lines() {
+        let line = line.map_err(|e| e.to_string())?;
+        if line.starts_with("out_time_ms=") {
+            if total_duration > 0.0 {
+                let ms_str = &line[12..];
+                if let Ok(ms) = ms_str.parse::<f32>() {
+                    let progress = (ms / 1_000_000.0) / total_duration;
+                    on_progress(progress.min(1.0));
+                }
+            }
+        }
+    }
+
+    let status = child.wait().map_err(|e| e.to_string())?;
+    if !status.success() {
+        return Err("ffmpeg conversion failed".to_string());
+    }
+
+    Ok(mp3_path)
+}
 
 pub fn normalize_file_destructive(path: &Path) -> Result<(), String> {
     let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("wav");

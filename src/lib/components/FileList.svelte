@@ -75,6 +75,7 @@
 	function handleSelection(event: MouseEvent, index: number) {
 		const isShift = event.shiftKey;
 		const isCtrl = event.ctrlKey || event.metaKey;
+		const file = displayedFiles[index];
 
 		if (isShift && lastSelectedIndex !== -1) {
 			const start = Math.min(lastSelectedIndex, index);
@@ -87,12 +88,14 @@
 			lastSelectedIndex = index;
 		} else {
 			if (displayedFiles[index].selected && !displayedFiles[index].missing) {
-				audioPlayer.toggle(displayedFiles[index]);
+				if (!collectionStore.isLocked(file.id)) {
+					audioPlayer.toggle(displayedFiles[index]);
+				}
 			} else {
 				files.forEach((f) => (f.selected = false));
 				displayedFiles[index].selected = true;
 				lastSelectedIndex = index;
-				if (!displayedFiles[index].missing) {
+				if (!displayedFiles[index].missing && !collectionStore.isLocked(file.id)) {
 					audioPlayer.play(displayedFiles[index]);
 				}
 			}
@@ -108,16 +111,18 @@
 			file.selected = true;
 		}
 
+		const isLocked = collectionStore.isLocked(file.id);
+
 		showContextMenu(event.clientX, event.clientY, [
 			{
 				label: audioPlayer.currentFileId === file.id && audioPlayer.isPlaying ? 'Pause' : 'Play',
-				disabled: file.missing,
+				disabled: file.missing || isLocked,
 				action: () => audioPlayer.toggle(file)
 			},
 			{ separator: true },
 			{
 				label: 'Add Tag...',
-				disabled: file.missing,
+				disabled: file.missing || isLocked,
 				action: () => {
 					taggingFile = file;
 					newTagValue = '';
@@ -144,12 +149,14 @@
 				? [
 						{
 							label: 'Locate File...',
+							disabled: isLocked,
 							action: () => collectionStore.relocateFile(file.id)
 						}
 					]
 				: []),
 			{
 				label: 'Remove',
+				disabled: isLocked,
 				action: () => {
 					fileToRemove = file;
 				}
@@ -496,9 +503,11 @@
 		</thead>
 		<tbody>
 			{#each displayedFiles as file, i (file.id)}
+				{@const isLocked = collectionStore.isLocked(file.id)}
 				<tr 
 					class:selected={file.selected} 
 					class:missing={file.missing}
+					class:locked={isLocked}
 					onclick={(e) => handleSelection(e, i)}
 					onkeydown={(e) => e.key === 'Enter' && handleSelection(e as unknown as MouseEvent, i)}
 					oncontextmenu={(e) => handleContextMenu(e, file)}
@@ -780,6 +789,12 @@
 
 	tr.missing td {
 		color: var(--text-muted);
+	}
+
+	tr.locked {
+		opacity: 0.6;
+		pointer-events: none;
+		filter: grayscale(0.5);
 	}
 
 	tr:focus-visible {

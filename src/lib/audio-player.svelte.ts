@@ -96,6 +96,10 @@ class AudioPlayer {
 
 	async play(file: FileItem) {
 		if (!collectionStore.collectionPath) return;
+		if (collectionStore.processingFiles.has(file.id)) {
+			console.warn('AudioPlayer: Cannot play file while it is being processed.');
+			return;
+		}
 
 		this.clearReplayTimeout();
 
