@@ -29,6 +29,9 @@ export interface Task {
     completed?: number;
     startTime?: number;
     eta?: string;
+    progressHistory?: { time: number; completed: number }[];
+    pausedDuration?: number;
+    pauseStartTime?: number;
 }
 
 class CollectionStore {
@@ -195,6 +198,41 @@ class CollectionStore {
         }
     }
 
+    private static readonly ETA_WINDOW_MS = 20_000;
+
+    private computeEtaMessage(task: Task, accurateCompleted: number): string {
+        if (task.total === undefined || accurateCompleted <= 0) return '';
+        const now = Date.now();
+
+        if (!task.progressHistory) task.progressHistory = [];
+        task.progressHistory.push({ time: now, completed: accurateCompleted });
+
+        // Drop samples older than the window
+        const cutoff = now - CollectionStore.ETA_WINDOW_MS;
+        while (task.progressHistory.length > 1 && task.progressHistory[0].time < cutoff) {
+            task.progressHistory.shift();
+        }
+
+        // Need at least two samples to measure rate
+        const oldest = task.progressHistory[0];
+        const newest = task.progressHistory[task.progressHistory.length - 1];
+        const windowMs = newest.time - oldest.time;
+        if (windowMs < 500) return '';
+
+        const rate = (newest.completed - oldest.completed) / (windowMs / 1000); // items/sec
+        if (!isFinite(rate) || rate <= 0) return '';
+
+        const remainingSeconds = (task.total - accurateCompleted) / rate;
+        if (!isFinite(remainingSeconds) || remainingSeconds <= 0) return '';
+
+        if (remainingSeconds < 60) {
+            return ` - ${Math.round(remainingSeconds)}s remaining`;
+        }
+        const mins = Math.floor(remainingSeconds / 60);
+        const secs = Math.round(remainingSeconds % 60);
+        return ` - ${mins}m ${secs}s remaining`;
+    }
+
     private updateWaveformTaskProgress() {
         const task = this.tasks.find(t => t.id === 'waveforms');
         if (!task || task.total === undefined || task.completed === undefined) return;
@@ -205,37 +243,8 @@ class CollectionStore {
 
         const accurateCompleted = task.completed + currentFilesProgress;
         task.progress = (accurateCompleted / task.total) * 100;
-        
-        let etaMessage = '';
-        if (task.startTime && accurateCompleted > 0) {
-            const elapsed = (Date.now() - task.startTime) / 1000;
-            const itemsPerSecond = accurateCompleted / elapsed;
-            const remainingItems = task.total - accurateCompleted;
-            const remainingSeconds = remainingItems / itemsPerSecond;
-            
-            if (remainingSeconds > 0) {
-                let smoothedSeconds = remainingSeconds;
-                if (task.eta) {
-                    const match = task.message?.match(/(\d+)m\s*(\d+)s|(\d+)s/);
-                    if (match) {
-                        let prevSeconds = 0;
-                        if (match[3]) prevSeconds = parseInt(match[3]);
-                        else prevSeconds = parseInt(match[1]) * 60 + parseInt(match[2]);
-                        smoothedSeconds = prevSeconds * 0.95 + remainingSeconds * 0.05;
-                    }
-                }
-
-                if (smoothedSeconds < 60) {
-                    etaMessage = ` - ${Math.round(smoothedSeconds)}s remaining`;
-                } else {
-                    const mins = Math.floor(smoothedSeconds / 60);
-                    const secs = Math.round(smoothedSeconds % 60);
-                    etaMessage = ` - ${mins}m ${secs}s remaining`;
-                }
-                task.eta = etaMessage;
-            }
-        }
-        
+        const etaMessage = task.status !== 'paused' ? this.computeEtaMessage(task, accurateCompleted) : '';
+        task.eta = etaMessage || undefined;
         task.message = `${task.completed} / ${task.total} waveforms${etaMessage}`;
     }
 
@@ -246,10 +255,12 @@ class CollectionStore {
         const currentFilesProgress = Object.entries(this.waveformProgress)
             .filter(([id]) => id.endsWith('-converting'))
             .reduce((acc, [_, p]) => acc + p, 0);
-            
+
         const accurateCompleted = task.completed + currentFilesProgress;
         task.progress = (accurateCompleted / task.total) * 100;
-        task.message = `Standardizing ${task.completed} / ${task.total} files...`;
+        const etaMessage = task.status !== 'paused' ? this.computeEtaMessage(task, accurateCompleted) : '';
+        task.eta = etaMessage || undefined;
+        task.message = `Standardizing ${task.completed} / ${task.total} files${etaMessage}`;
     }
 
     private handleCollectionResult(result: { files: Omit<FileItem, 'selected'>[], waveform_ids: string[], conversion_ids: string[] }) {
@@ -584,9 +595,11 @@ class CollectionStore {
         try {
             await invoke('pause_processing');
             this.processingPaused = true;
+            const now = Date.now();
             this.tasks.forEach(t => {
                 if (t.status === 'running' || t.status === 'pending') {
                     t.status = 'paused';
+                    t.pauseStartTime = now;
                 }
             });
         } catch (e) {
@@ -598,9 +611,15 @@ class CollectionStore {
         try {
             await invoke('resume_processing');
             this.processingPaused = false;
+            const now = Date.now();
             this.tasks.forEach(t => {
                 if (t.status === 'paused') {
                     t.status = 'running';
+                    if (t.pauseStartTime) {
+                        t.pausedDuration = (t.pausedDuration ?? 0) + (now - t.pauseStartTime);
+                        t.pauseStartTime = undefined;
+                    }
+                    t.progressHistory = undefined;
                 }
             });
         } catch (e) {
