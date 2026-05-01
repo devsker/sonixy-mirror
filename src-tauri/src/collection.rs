@@ -330,6 +330,18 @@ pub fn update_file_path(
 use std::io::BufRead;
 use std::process::{Command, Stdio};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+fn create_command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(0x08000000);
+    }
+    cmd
+}
+
 pub fn convert_to_mp3<F>(path: &Path, mut on_progress: F) -> Result<PathBuf, String>
 where
     F: FnMut(f32),
@@ -348,7 +360,7 @@ where
         None => 0.0,
     };
 
-    let mut child = Command::new("ffmpeg")
+    let mut child = create_command("ffmpeg")
         .arg("-i")
         .arg(path)
         .arg("-codec:a")
@@ -394,7 +406,7 @@ pub fn normalize_file_destructive(path: &Path) -> Result<(), String> {
     temp_path.set_extension(format!("normalized.{}", extension));
     
     // Use ffmpeg's loudnorm filter for EBU R128 normalization
-    let output = Command::new("ffmpeg")
+    let output = create_command("ffmpeg")
         .arg("-i")
         .arg(path)
         .arg("-af")
@@ -435,7 +447,7 @@ pub fn trim_and_save(
     };
     let duration_to_cut = end_time - start_time;
 
-    let output = std::process::Command::new("ffmpeg")
+    let output = create_command("ffmpeg")
         .arg("-y")
         .arg("-ss")
         .arg(start_time.to_string())
