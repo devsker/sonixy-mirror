@@ -132,21 +132,23 @@
     );
 </script>
 
-<div class="visualizer" ondragend={resetDragState}>
+<div class="visualizer" role="presentation" ondragend={resetDragState}>
     <div class="titlebar mock">
         {#each ['left', 'center', 'right'] as section}
             {@const sectionData = sections[section as keyof typeof sections]}
-            <div 
+            <div
                 class="titlebar-section titlebar-{section} droppable-section"
                 class:drag-over={dragOverSection === section && dragOverIndex === null}
+                role="presentation"
                 ondragover={(e) => handleDragOver(e, section as any)}
                 ondrop={(e) => handleDrop(e, section as any)}
                 ondragleave={handleDragLeave}
             >
                 {#each sectionData as item, i (item.index + '-' + item.id)}
-                    <div 
+                    <div
                         class="element-wrapper"
                         class:drop-target={dragOverSection === section && dragOverIndex === i}
+                        role="presentation"
                         draggable="true"
                         ondragstart={(e) => handleDragStart(e, item.id, item.index)}
                         ondragover={(e) => {
@@ -187,7 +189,7 @@
                             </div>
                         {:else if item.id === 'tasks'}
                             <div class="task-container draggable-element">
-                                <button class="control-btn task-btn">
+                                <button class="control-btn task-btn" aria-label="Background Tasks">
                                     <svg width="18" height="18" viewBox="0 0 18 18">
                                         <circle cx="9" cy="9" r="7" fill="none" stroke="currentColor" stroke-width="2" opacity="0.2"/>
                                         <circle cx="9" cy="9" r="7" fill="none" stroke="var(--accent-color, #3b82f6)" stroke-width="2" stroke-dasharray="44" stroke-dashoffset="11" stroke-linecap="round" transform="rotate(-90 9 9)"/>
@@ -229,17 +231,19 @@
     </div>
 
     <div class="pool-container">
-        <div 
+        <div
             class="element-pool"
             class:drag-over={dragOverSection === 'pool'}
+            role="presentation"
             ondragover={(e) => handleDragOver(e, 'pool')}
             ondrop={(e) => handleDrop(e, 'pool')}
             ondragleave={handleDragLeave}
         >
             <div class="pool-label">Available:</div>
             {#each availableElements as el, i (el.id + '-' + i)}
-                <div 
-                    class="pool-item" 
+                <div
+                    class="pool-item"
+                    role="presentation"
                     draggable="true"
                     title={el.label}
                     ondragstart={(e) => handleDragStart(e, el.id, null)}

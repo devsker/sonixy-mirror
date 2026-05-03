@@ -64,7 +64,7 @@
 			</div>
 
 			<div class="setting-item">
-				<label>Titlebar Layout</label>
+				<h3>Titlebar Layout</h3>
 				<TitlebarVisualizer {settings} />
 				<button
 					class="reset-btn"
@@ -83,7 +83,7 @@
 			</div>
 
 			<div class="setting-item">
-				<label>Column Order</label>
+				<h3>Column Order</h3>
 				<button class="reset-btn" onclick={() => settings.columnOrder = ['filename', 'format', 'length', 'size', 'tags']}>
 					Reset Column Order
 				</button>
@@ -130,7 +130,7 @@
 			</div>
 
 			<div class="setting-item">
-				<label>Waveforms</label>
+				<h3>Waveforms</h3>
 				<button class="reset-btn" onclick={() => collectionStore.regenerateWaveforms()}>
 					Re-generate All Waveforms
 				</button>
