@@ -356,6 +356,11 @@ class CollectionStore {
             this.loading = true;
             this.collectionPath = path;
             this.processingFiles = new Set();
+            this.tasks = [];
+            this.processingPaused = false;
+            this.currentlyProcessingIds = new Set();
+            this.waveformProgress = {};
+            this.partialWaveforms = {};
             const result = await invoke<{ files: Omit<FileItem, 'selected'>[], waveform_ids: string[], conversion_ids: string[] }>('open_collection', { path });
             this.handleCollectionResult(result);
             localStorage.setItem('lastCollectionPath', path);

@@ -3,7 +3,7 @@
 	import { onMount, tick } from 'svelte';
 	import { scale } from 'svelte/transition';
 
-	let menuElement: HTMLElement;
+	let menuElement = $state<HTMLElement | undefined>();
 
 	onMount(() => {
 		const handleClickOutside = (event: MouseEvent) => {

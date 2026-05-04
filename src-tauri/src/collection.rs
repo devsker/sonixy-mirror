@@ -334,12 +334,16 @@ use std::process::{Command, Stdio};
 use std::os::windows::process::CommandExt;
 
 fn create_command(program: &str) -> Command {
-    let mut cmd = Command::new(program);
     #[cfg(windows)]
     {
+        let mut cmd = Command::new(program);
         cmd.creation_flags(0x08000000);
+        cmd
     }
-    cmd
+    #[cfg(not(windows))]
+    {
+        Command::new(program)
+    }
 }
 
 pub fn convert_to_mp3<F>(path: &Path, mut on_progress: F) -> Result<PathBuf, String>
