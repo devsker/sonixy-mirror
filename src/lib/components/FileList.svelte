@@ -3,7 +3,6 @@
 	import { ChevronUp, ChevronDown, Filter, FolderOpen, Loader2, AlertTriangle, Trash2, Search, Circle, Tag, Plus, X } from 'lucide-svelte';
 	import { showContextMenu } from '$lib/context-menu.svelte';
 	import { revealItemInDir } from '@tauri-apps/plugin-opener';
-	import { ask, message } from '@tauri-apps/plugin-dialog';
 	import { resolveResource } from '@tauri-apps/api/path';
 	import { startDrag } from '@crabnebula/tauri-plugin-drag';
 	import { collectionStore, type FileItem } from '$lib/collection-store.svelte';
@@ -360,8 +359,9 @@
 	</div>
 {/if}
 
-<div 
+<div
 	class="file-list-container"
+	role="presentation"
 	oncontextmenu={(e) => {
 		if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('empty-state')) {
 			e.preventDefault();
@@ -607,11 +607,10 @@
 										{#if taggingFile?.id === file.id}
 											<span class="tag tagging">
 												<span class="input-mirror">{newTagValue || 'Tag...'}</span>
-												<input 
+												<input
 													type="text"
 													class="tag-input-inline"
 													bind:value={newTagValue}
-													autofocus
 													size="1"
 													onkeydown={(e) => {
 														if (e.key === 'Enter') {

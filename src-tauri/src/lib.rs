@@ -18,6 +18,7 @@ enum TaskType {
 
 struct WaveformTask {
     id: String,
+    collection_path: PathBuf,
     relative_path: String,
     task_type: TaskType,
 }
@@ -92,6 +93,7 @@ fn queue_missing_waveforms(
                 added_ids.push(id.clone());
                 tasks.push_back(WaveformTask {
                     id,
+                    collection_path: folder_path.clone(),
                     relative_path,
                     task_type: TaskType::Waveform { normalize },
                 });
@@ -124,6 +126,15 @@ async fn open_collection(
         *state_path = Some(folder_path.clone());
     }
 
+    // Clear the current queue when opening a new collection and ensure processing is resumed
+    {
+        let mut tasks = state.waveform_queue.tasks.lock().map_err(|_| "State poisoned")?;
+        tasks.clear();
+        state.waveform_queue.paused.store(false, Ordering::SeqCst);
+        state.waveform_queue.cvar.notify_all();
+        state.waveform_queue.pause_cvar.notify_all();
+    }
+
     let mut conversion_ids = Vec::new();
     // Queue conversion tasks
     if !conversion_needed.is_empty() {
@@ -132,6 +143,7 @@ async fn open_collection(
             conversion_ids.push(id.clone());
             tasks.push_back(WaveformTask {
                 id: id.clone(),
+                collection_path: folder_path.clone(),
                 relative_path,
                 task_type: TaskType::Convert { id },
             });
@@ -193,6 +205,7 @@ fn get_waveform(id: String, state: State<'_, AppState>) -> Result<Option<Vec<u8>
             tasks.retain(|t| t.id != id);
             tasks.push_front(WaveformTask {
                 id,
+                collection_path: folder_path.clone(),
                 relative_path,
                 task_type: TaskType::Waveform { normalize: false },
             });
@@ -252,6 +265,7 @@ async fn relocate_file(
         let mut tasks = state.waveform_queue.tasks.lock().map_err(|_| "State poisoned")?;
         tasks.push_back(WaveformTask {
             id: id.clone(),
+            collection_path: folder_path.clone(),
             relative_path: filepath_str,
             task_type: TaskType::Convert { id: id.clone() },
         });
@@ -365,6 +379,7 @@ async fn add_files_to_collection(
                 conversion_ids.push(item.id.clone());
                 conversion_tasks.push(WaveformTask {
                     id: item.id.clone(),
+                    collection_path: folder_path.clone(),
                     relative_path: item.filepath.clone(),
                     task_type: TaskType::Convert { id: item.id.clone() },
                 });
@@ -780,118 +795,116 @@ pub fn run() {
                             tasks.remove(task_index).unwrap()
                         };
 
-                        // Get collection path
-                        let Ok(folder_path) = handle.state::<AppState>().collection_path.lock().map(|g| g.clone()) else { break; };
+                        let folder_path = task.collection_path.clone();
 
-                        if let Some(folder_path) = folder_path {
-                            // Re-open connection if collection path changed.
-                            let conn_valid = worker_conn.as_ref().map(|(p, _)| p == &folder_path).unwrap_or(false);
-                            if !conn_valid {
-                                worker_conn = collection::init_db(&folder_path).ok().map(|c| (folder_path.clone(), c));
-                            }
+                        // Re-open connection if collection path changed.
+                        let conn_valid = worker_conn.as_ref().map(|(p, _)| p == &folder_path).unwrap_or(false);
+                        if !conn_valid {
+                            worker_conn = collection::init_db(&folder_path).ok().map(|c| (folder_path.clone(), c));
+                        }
 
-                            let full_path = folder_path.join(&task.relative_path);
+                        let full_path = folder_path.join(&task.relative_path);
 
-                            match task.task_type {
-                                TaskType::Waveform { normalize } => {
-                                    // Perform destructive normalization if requested
-                                    if normalize {
-                                        let _ = handle.emit("waveform-started", format!("{}-normalizing", task.id));
-                                        if let Err(e) = collection::normalize_file_destructive(&full_path) {
-                                            eprintln!("Destructive normalization failed for {}: {}", task.id, e);
-                                        }
-                                    }
-
-                                    // Emit started event
-                                    let _ = handle.emit("waveform-started", task.id.clone());
-
-                                    let task_id = task.id.clone();
-                                    let handle_clone = handle.clone();
-                                    let queue_clone = Arc::clone(&queue);
-                                    if let Some(waveform) = collection::generate_waveform(&full_path, move |progress, data| {
-                                        let mut guard = queue_clone.pause_mutex.lock().unwrap_or_else(|e| e.into_inner());
-                                        while queue_clone.paused.load(Ordering::SeqCst) {
-                                            guard = queue_clone.pause_cvar.wait(guard).unwrap_or_else(|e| e.into_inner());
-                                        }
-                                        drop(guard);
-                                        let _ = handle_clone.emit("waveform-progress", WaveformProgress {
-                                            id: task_id.clone(),
-                                            progress,
-                                            data,
-                                        });
-                                    }) {
-                                        if let Some((_, conn)) = &worker_conn {
-                                            let _ = conn.execute(
-                                                "INSERT OR REPLACE INTO waveforms (id, data) VALUES (?1, ?2)",
-                                                rusqlite::params![task.id, waveform],
-                                            );
-
-                                            if normalize {
-                                                if let Some(meta) = collection::extract_metadata(&full_path) {
-                                                    let _ = conn.execute(
-                                                        "UPDATE files SET size = ?1, duration = ?2, length = ?3, gain = 1.0 WHERE id = ?4",
-                                                        rusqlite::params![meta.size, meta.duration, meta.length, task.id],
-                                                    );
-                                                }
-                                            }
-
-                                            let _ = handle.emit("waveform-generated", serde_json::json!({
-                                                "id": task.id,
-                                                "gain": 1.0
-                                            }));
-                                        }
+                        match task.task_type {
+                            TaskType::Waveform { normalize } => {
+                                // Perform destructive normalization if requested
+                                if normalize {
+                                    let _ = handle.emit("waveform-started", format!("{}-normalizing", task.id));
+                                    if let Err(e) = collection::normalize_file_destructive(&full_path) {
+                                        eprintln!("Destructive normalization failed for {}: {}", task.id, e);
                                     }
                                 }
-                                TaskType::Convert { id } => {
-                                    let _ = handle.emit("waveform-started", format!("{}-converting", id));
 
-                                    let id_clone = id.clone();
-                                    let handle_clone = handle.clone();
-                                    let queue_clone = Arc::clone(&queue);
-                                    match collection::convert_to_mp3(&full_path, move |progress| {
-                                        let mut guard = queue_clone.pause_mutex.lock().unwrap_or_else(|e| e.into_inner());
-                                        while queue_clone.paused.load(Ordering::SeqCst) {
-                                            guard = queue_clone.pause_cvar.wait(guard).unwrap_or_else(|e| e.into_inner());
-                                        }
-                                        drop(guard);
-                                        let _ = handle_clone.emit("waveform-progress", WaveformProgress {
-                                            id: format!("{}-converting", id_clone),
-                                            progress,
-                                            data: None,
-                                        });
-                                    }) {
-                                        Ok(new_path) => {
-                                            let _ = std::fs::remove_file(&full_path);
+                                // Emit started event
+                                let _ = handle.emit("waveform-started", task.id.clone());
 
-                                            if let Some((_, conn)) = &worker_conn {
-                                                let relative_path = new_path.strip_prefix(&folder_path).unwrap_or(&new_path);
-                                                let filepath_str = relative_path.to_string_lossy().to_string();
+                                let task_id = task.id.clone();
+                                let handle_clone = handle.clone();
+                                let queue_clone = Arc::clone(&queue);
+                                if let Some(waveform) = collection::generate_waveform(&full_path, move |progress, data| {
+                                    let mut guard = queue_clone.pause_mutex.lock().unwrap_or_else(|e| e.into_inner());
+                                    while queue_clone.paused.load(Ordering::SeqCst) {
+                                        guard = queue_clone.pause_cvar.wait(guard).unwrap_or_else(|e| e.into_inner());
+                                    }
+                                    drop(guard);
+                                    let _ = handle_clone.emit("waveform-progress", WaveformProgress {
+                                        id: task_id.clone(),
+                                        progress,
+                                        data,
+                                    });
+                                }) {
+                                    if let Some((_, conn)) = &worker_conn {
+                                        let _ = conn.execute(
+                                            "INSERT OR REPLACE INTO waveforms (id, data) VALUES (?1, ?2)",
+                                            rusqlite::params![task.id, waveform],
+                                        );
 
-                                                if let Some(meta) = collection::extract_metadata(&new_path) {
-                                                    let _ = conn.execute(
-                                                        "UPDATE files SET filename = ?1, filepath = ?2, format = ?3, size = ?4, duration = ?5, length = ?6 WHERE id = ?7",
-                                                        rusqlite::params![meta.filename, filepath_str, meta.format, meta.size, meta.duration, meta.length, id],
-                                                    );
-                                                }
+                                        if normalize {
+                                            if let Some(meta) = collection::extract_metadata(&full_path) {
+                                                let _ = conn.execute(
+                                                    "UPDATE files SET size = ?1, duration = ?2, length = ?3, gain = 1.0 WHERE id = ?4",
+                                                    rusqlite::params![meta.size, meta.duration, meta.length, task.id],
+                                                );
                                             }
-
-                                            let _ = handle.emit("waveform-generated", serde_json::json!({
-                                                "id": format!("{}-converting", id),
-                                                "gain": 1.0
-                                            }));
-
-                                            // Now queue waveform generation for the new file
-                                            let mut tasks = queue.tasks.lock().unwrap();
-                                            tasks.push_back(WaveformTask {
-                                                id: id.clone(),
-                                                relative_path: new_path.strip_prefix(&folder_path).unwrap_or(&new_path).to_string_lossy().to_string(),
-                                                task_type: TaskType::Waveform { normalize: false },
-                                            });
-                                            queue.cvar.notify_all();
                                         }
-                                        Err(e) => {
-                                            eprintln!("Conversion failed for {}: {}", id, e);
+
+                                        let _ = handle.emit("waveform-generated", serde_json::json!({
+                                            "id": task.id,
+                                            "gain": 1.0
+                                        }));
+                                    }
+                                }
+                            }
+                            TaskType::Convert { id } => {
+                                let _ = handle.emit("waveform-started", format!("{}-converting", id));
+
+                                let id_clone = id.clone();
+                                let handle_clone = handle.clone();
+                                let queue_clone = Arc::clone(&queue);
+                                match collection::convert_to_mp3(&full_path, move |progress| {
+                                    let mut guard = queue_clone.pause_mutex.lock().unwrap_or_else(|e| e.into_inner());
+                                    while queue_clone.paused.load(Ordering::SeqCst) {
+                                        guard = queue_clone.pause_cvar.wait(guard).unwrap_or_else(|e| e.into_inner());
+                                    }
+                                    drop(guard);
+                                    let _ = handle_clone.emit("waveform-progress", WaveformProgress {
+                                        id: format!("{}-converting", id_clone),
+                                        progress,
+                                        data: None,
+                                    });
+                                }) {
+                                    Ok(new_path) => {
+                                        let _ = std::fs::remove_file(&full_path);
+
+                                        if let Some((_, conn)) = &worker_conn {
+                                            let relative_path = new_path.strip_prefix(&folder_path).unwrap_or(&new_path);
+                                            let filepath_str = relative_path.to_string_lossy().to_string();
+
+                                            if let Some(meta) = collection::extract_metadata(&new_path) {
+                                                let _ = conn.execute(
+                                                    "UPDATE files SET filename = ?1, filepath = ?2, format = ?3, size = ?4, duration = ?5, length = ?6 WHERE id = ?7",
+                                                    rusqlite::params![meta.filename, filepath_str, meta.format, meta.size, meta.duration, meta.length, id],
+                                                );
+                                            }
                                         }
+
+                                        let _ = handle.emit("waveform-generated", serde_json::json!({
+                                            "id": format!("{}-converting", id),
+                                            "gain": 1.0
+                                        }));
+
+                                        // Now queue waveform generation for the new file
+                                        let mut tasks = queue.tasks.lock().unwrap();
+                                        tasks.push_back(WaveformTask {
+                                            id: id.clone(),
+                                            collection_path: folder_path.clone(),
+                                            relative_path: new_path.strip_prefix(&folder_path).unwrap_or(&new_path).to_string_lossy().to_string(),
+                                            task_type: TaskType::Waveform { normalize: false },
+                                        });
+                                        queue.cvar.notify_all();
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Conversion failed for {}: {}", id, e);
                                     }
                                 }
                             }
