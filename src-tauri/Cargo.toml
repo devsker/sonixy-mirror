@@ -1,6 +1,6 @@
 [package]
 name = "sonixy"
-version = "0.2.1"
+version = "0.2.2"
 description = "lightweight audio collection manager"
 authors = ["sker"]
 edition = "2021"
@@ -32,4 +32,3 @@ uuid = { version = "1", features = ["v4", "serde"] }
 symphonia = { version = "0.5.5", features = ["all"] }
 rodio = { version = "0.19", features = ["symphonia-all"] }
 rayon = "1.10"
-
