@@ -8,12 +8,12 @@
 	import { startDrag } from '@crabnebula/tauri-plugin-drag';
 
 	interface Props {
-		height?: number;
+		height?: number | string;
 		color?: string;
 		id?: string;
 	}
 
-	let { height = 60, color = 'var(--icon-active)', id = '' }: Props = $props();
+	let { height = '100%', color = 'var(--icon-active)', id = '' }: Props = $props();
 
 	let waveformData = $state<number[] | null>(null);
 	let isLoading = $state(true);
@@ -214,7 +214,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
 	class="waveform-container"
-	style="height: {height}px"
+	style="height: {typeof height === 'number' ? height + 'px' : height}"
 	onmousemove={onMouseMove}
 	onmouseup={onMouseUp}
 	onmouseleave={onMouseUp}
@@ -318,7 +318,7 @@
 	.waveform-container {
 		width: 100%;
 		height: 100%;
-		padding: 12px 16px;
+		padding: 4px 16px;
 		box-sizing: border-box;
 		display: flex;
 		align-items: center;
