@@ -202,11 +202,11 @@
 	}
 
 	function getBarHeight(val: number) {
-		if (!val || isNaN(val) || val <= 0) return 0;
-		const minHeight = 1;
+		const minHeight = 2;
+		if (!val || isNaN(val) || val <= 0) return minHeight;
 		// Use a slight non-linear scaling to make low volumes more visible
 		const boosted = Math.pow(val, 0.8);
-		const scaledHeight = boosted * 90;
+		const scaledHeight = boosted * 92;
 		return Math.max(minHeight, scaledHeight);
 	}
 </script>
