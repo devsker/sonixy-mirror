@@ -26,6 +26,7 @@
 	let selectionEnd = $state<number | null>(null);
 	let dragStartPos = $state<number | null>(null);
 	let currentPos = $state<number | null>(null);
+	let hoverPos = $state<number | null>(null);
 	let isDragging = $state(false);
 	let dragClipPath = $state<string | null>(null);
 	let isPreparingClip = $state(false);
@@ -139,9 +140,14 @@
 	}
 
 	function onMouseMove(e: MouseEvent) {
+		hoverPos = e.clientX;
 		if (isDragging) {
 			currentPos = e.clientX;
 		}
+	}
+
+	function onMouseLeave() {
+		hoverPos = null;
 	}
 
 	async function onMouseUp(e: MouseEvent) {
@@ -217,7 +223,10 @@
 	style="height: {typeof height === 'number' ? height + 'px' : height}"
 	onmousemove={onMouseMove}
 	onmouseup={onMouseUp}
-	onmouseleave={onMouseUp}
+	onmouseleave={() => {
+		onMouseUp({} as MouseEvent);
+		onMouseLeave();
+	}}
 >
 	<svg
 		bind:this={svgElement}
@@ -279,6 +288,22 @@
 				class:no-transition={!waveformData && isLoading}
 			/>
 		</g>
+
+		{#if hoverPos && svgElement}
+			{@const rect = svgElement.getBoundingClientRect()}
+			{@const hoverPct = Math.max(0, Math.min(1, (hoverPos - rect.left) / rect.width))}
+			{@const hoverX = hoverPct * barsCount * 3}
+			<line
+				x1={hoverX}
+				y1="0"
+				x2={hoverX}
+				y2="100"
+				stroke="var(--accent-color)"
+				stroke-width="1.5"
+				pointer-events="none"
+				class="hover-line"
+			/>
+		{/if}
 
 		{#if currentSelection}
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -383,5 +408,19 @@
 		to {
 			stroke-dashoffset: -16;
 		}
+	}
+
+	.hover-line {
+		opacity: 0.7;
+		transition: opacity 0.15s ease;
+	}
+
+	:global(html.dark) .hover-line {
+		stroke: #007acc;
+	}
+
+	:global(html:not(.dark)) .hover-line {
+		stroke: #ffffff;
+		opacity: 0.8;
 	}
 </style>
