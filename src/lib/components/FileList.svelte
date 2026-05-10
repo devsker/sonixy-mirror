@@ -208,10 +208,7 @@
 
 	async function handleFileDragStart(event: DragEvent, file: FileItem) {
 		if (file.missing || !collectionPath) return;
-		event.preventDefault();
-		
-		// If the file is part of selection, drag all selected files
-		// Otherwise, drag just this file
+
 		const selectedFiles = files.filter(f => f.selected && !f.missing);
 		let pathsToDrag: string[] = [];
 
@@ -221,17 +218,18 @@
 			pathsToDrag = [`${collectionPath}/${file.filepath}`.replace(/[\\\/]+/g, '/')];
 		}
 
-		if (pathsToDrag.length > 0) {
-			const iconPath = await resolveResource('static/tauri.svg');
+		if (pathsToDrag.length > 0 && event.dataTransfer) {
+			event.dataTransfer.effectAllowed = 'copy';
+			event.dataTransfer.setData('text/plain', pathsToDrag.join('\n'));
 			collectionStore.isDraggingFromApp = true;
-			try {
-				await startDrag({
-					item: pathsToDrag,
-					icon: iconPath
-				});
-			} finally {
+			// Convert paths to file URLs for proper macOS support
+			const fileUrls = pathsToDrag.map(p => `file://${p}`);
+			startDrag({
+				item: fileUrls,
+				image: 'icon.png'
+			}).finally(() => {
 				collectionStore.isDraggingFromApp = false;
-			}
+			});
 		}
 	}
 
@@ -512,9 +510,9 @@
 					onclick={(e) => handleSelection(e, i)}
 					onkeydown={(e) => e.key === 'Enter' && handleSelection(e as unknown as MouseEvent, i)}
 					oncontextmenu={(e) => handleContextMenu(e, file)}
-					tabindex="0"
 					draggable="true"
 					ondragstart={(e) => handleFileDragStart(e, file)}
+					tabindex="0"
 				>
 					{#if showCheckboxes}
 						<td class="checkbox-col">

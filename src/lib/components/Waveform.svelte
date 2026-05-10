@@ -191,20 +191,19 @@
 		currentPos = null;
 	}
 
-	async function handleDragStart(e: DragEvent) {
+	function handleDragStart(e: DragEvent) {
 		if (!dragClipPath) {
 			e.preventDefault();
 			return;
 		}
 		collectionStore.isDraggingFromApp = true;
-		try {
-			await startDrag({
-				item: [dragClipPath],
-				icon: 'tauri.svg'
-			});
-		} finally {
+		const fileUrl = `file://${dragClipPath}`;
+		startDrag({
+			item: [fileUrl],
+			image: 'icon.png'
+		}).finally(() => {
 			collectionStore.isDraggingFromApp = false;
-		}
+		});
 	}
 
 	function getBarHeight(val: number) {
@@ -316,19 +315,18 @@
 				stroke="var(--selection-color)"
 				stroke-opacity="0.8"
 				stroke-width="1"
-				onmousedown={async (e) => {
+				onmousedown={(e) => {
 					e.stopPropagation();
 					e.preventDefault();
 					if (dragClipPath) {
 						collectionStore.isDraggingFromApp = true;
-						try {
-							await startDrag({
-								item: [dragClipPath],
-								icon: 'tauri.svg'
-							});
-						} finally {
+						const fileUrl = `file://${dragClipPath}`;
+						startDrag({
+							item: [fileUrl],
+							image: 'icon.png'
+						}).finally(() => {
 							collectionStore.isDraggingFromApp = false;
-						}
+						});
 					}
 				}}
 				class="selection-rect"
@@ -420,7 +418,7 @@
 	}
 
 	:global(html:not(.dark)) .hover-line {
-		stroke: #ffffff;
+		stroke: #007acc;
 		opacity: 0.8;
 	}
 </style>
