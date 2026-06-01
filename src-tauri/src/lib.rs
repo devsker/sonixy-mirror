@@ -9,7 +9,7 @@ use std::io::{Cursor, Read};
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{Emitter, Manager, State};
+use tauri::{Emitter, Manager, State, WindowEvent};
 
 enum TaskType {
     Waveform { normalize: bool },
@@ -104,41 +104,18 @@ fn queue_missing_waveforms(
     Ok(added_ids)
 }
 
-#[tauri::command]
-async fn open_collection(
-    path: String,
-    state: State<'_, AppState>,
-) -> Result<CollectionResult, String> {
-    let folder_path = PathBuf::from(&path);
-    if !folder_path.exists() || !folder_path.is_dir() {
-        return Err("Invalid folder path".to_string());
-    }
-
-    let conn = collection::init_db(&folder_path).map_err(|e| e.to_string())?;
-    let conversion_needed = collection::scan_folder(&folder_path, &conn).map_err(|e| e.to_string())?;
-    let files = collection::get_all_files(&folder_path, &conn).map_err(|e| e.to_string())?;
-
-    {
-        let mut state_path = state
-            .collection_path
+fn enqueue_post_scan_work(
+    folder_path: &PathBuf,
+    conversion_needed: Vec<(String, String)>,
+    state: &AppState,
+) -> Result<(Vec<String>, Vec<String>), String> {
+    let mut conversion_ids = Vec::new();
+    if !conversion_needed.is_empty() {
+        let mut tasks = state
+            .waveform_queue
+            .tasks
             .lock()
             .map_err(|_| "State poisoned".to_string())?;
-        *state_path = Some(folder_path.clone());
-    }
-
-    // Clear the current queue when opening a new collection and ensure processing is resumed
-    {
-        let mut tasks = state.waveform_queue.tasks.lock().map_err(|_| "State poisoned")?;
-        tasks.clear();
-        state.waveform_queue.paused.store(false, Ordering::SeqCst);
-        state.waveform_queue.cvar.notify_all();
-        state.waveform_queue.pause_cvar.notify_all();
-    }
-
-    let mut conversion_ids = Vec::new();
-    // Queue conversion tasks
-    if !conversion_needed.is_empty() {
-        let mut tasks = state.waveform_queue.tasks.lock().map_err(|_| "State poisoned")?;
         for (id, relative_path) in conversion_needed {
             conversion_ids.push(id.clone());
             tasks.push_back(WaveformTask {
@@ -151,9 +128,90 @@ async fn open_collection(
         state.waveform_queue.cvar.notify_all();
     }
 
-    // Queue missing waveforms in background
     let waveform_ids =
-        queue_missing_waveforms(&folder_path, &state.waveform_queue, false).unwrap_or_default();
+        queue_missing_waveforms(folder_path, &state.waveform_queue, false).unwrap_or_default();
+
+    Ok((conversion_ids, waveform_ids))
+}
+
+fn activate_collection(
+    folder_path: PathBuf,
+    clear_unrelated_tasks: bool,
+    state: &AppState,
+) -> Result<CollectionResult, String> {
+    if !folder_path.exists() || !folder_path.is_dir() {
+        return Err("Invalid folder path".to_string());
+    }
+
+    {
+        let mut state_path = state
+            .collection_path
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?;
+        *state_path = Some(folder_path.clone());
+    }
+
+    {
+        let mut tasks = state
+            .waveform_queue
+            .tasks
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?;
+        if clear_unrelated_tasks {
+            tasks.clear();
+        } else {
+            tasks.retain(|t| t.collection_path == folder_path);
+        }
+        state.waveform_queue.paused.store(false, Ordering::SeqCst);
+        state.waveform_queue.cvar.notify_all();
+        state.waveform_queue.pause_cvar.notify_all();
+    }
+
+    let conn = collection::init_db(&folder_path).map_err(|e| e.to_string())?;
+    let conversion_needed =
+        collection::scan_folder(&folder_path, &conn).map_err(|e| e.to_string())?;
+    let files = collection::get_all_files(&folder_path, &conn).map_err(|e| e.to_string())?;
+
+    let (conversion_ids, waveform_ids) =
+        enqueue_post_scan_work(&folder_path, conversion_needed, state)?;
+
+    Ok(CollectionResult {
+        files,
+        waveform_ids,
+        conversion_ids,
+    })
+}
+
+#[tauri::command]
+async fn open_collection(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<CollectionResult, String> {
+    activate_collection(PathBuf::from(path), true, &state)
+}
+
+#[tauri::command]
+async fn switch_collection(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<CollectionResult, String> {
+    activate_collection(PathBuf::from(path), false, &state)
+}
+
+#[tauri::command]
+async fn rescan_collection(state: State<'_, AppState>) -> Result<CollectionResult, String> {
+    let state_path = state
+        .collection_path
+        .lock()
+        .map_err(|_| "State poisoned".to_string())?;
+    let folder_path = state_path.as_ref().ok_or("No collection open")?.clone();
+
+    let conn = collection::init_db(&folder_path).map_err(|e| e.to_string())?;
+    let conversion_needed = collection::scan_folder(&folder_path, &conn).map_err(|e| e.to_string())?;
+    let files = collection::get_all_files(&folder_path, &conn).map_err(|e| e.to_string())?;
+
+    let (conversion_ids, waveform_ids) =
+        enqueue_post_scan_work(&folder_path, conversion_needed, &state)?;
 
     Ok(CollectionResult {
         files,
@@ -584,7 +642,6 @@ fn get_audio_time(state: State<'_, AppState>) -> f32 {
 
 #[tauri::command]
 fn seek_audio(time_seconds: f32, state: State<'_, AppState>) -> Result<(), String> {
-    println!("Seeking to {}s", time_seconds);
     let sink = state
         .audio
         .sink
@@ -592,7 +649,6 @@ fn seek_audio(time_seconds: f32, state: State<'_, AppState>) -> Result<(), Strin
         .map_err(|_| "State poisoned".to_string())?;
     let duration = Duration::from_secs_f32(time_seconds);
     if let Err(e) = sink.try_seek(duration) {
-        println!("Seek error: {}", e);
         return Err(e.to_string());
     }
 
@@ -918,8 +974,17 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_drag::init())
+        .on_window_event(|window, event| {
+            #[cfg(target_os = "macos")]
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let _ = window.hide();
+                api.prevent_close();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             open_collection,
+            switch_collection,
+            rescan_collection,
             get_collection_files,
             get_waveform,
             add_files_to_collection,
@@ -938,6 +1003,21 @@ pub fn run() {
             pause_processing,
             resume_processing
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen {
+                has_visible_windows,
+                ..
+            } = event
+            {
+                if !has_visible_windows {
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+            }
+        });
 }

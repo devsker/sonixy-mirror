@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
-	import { ChevronUp, ChevronDown, Filter, FolderOpen, Loader2, AlertTriangle, Trash2, Search, Circle, Tag, Plus, X } from 'lucide-svelte';
+	import { ChevronUp, ChevronDown, Filter, FolderOpen, FolderSearch, Loader2, AlertTriangle, Trash2, Circle, Tag, Plus, X } from 'lucide-svelte';
+	import { settingsStore } from '$lib/settings-store.svelte';
+	import { collectionDisplayName } from '$lib/collection-path';
 	import { showContextMenu } from '$lib/context-menu.svelte';
 	import { revealItemInDir } from '@tauri-apps/plugin-opener';
-	import { resolveResource } from '@tauri-apps/api/path';
-	import { startDrag } from '@crabnebula/tauri-plugin-drag';
+	import { startExternalFileDrag } from '$lib/file-drag';
 	import { collectionStore, type FileItem } from '$lib/collection-store.svelte';
 	import { audioPlayer } from '$lib/audio-player.svelte';
 
@@ -21,6 +22,8 @@
 
 	let files = $derived(collectionStore.files);
 	let loading = $derived(collectionStore.loading);
+	let showSwitchingUi = $derived(collectionStore.showSwitchingUi);
+	let switchingToPath = $derived(collectionStore.switchingToPath);
 	let collectionPath = $derived(collectionStore.collectionPath);
 	let processingFiles = $derived(collectionStore.processingFiles);
 	let currentlyProcessingIds = $derived(collectionStore.currentlyProcessingIds);
@@ -33,11 +36,10 @@
 		onSelectionChange?.(selectedIds);
 	});
 
-	// Filter & Sort State from CollectionStore
-	let sortColumn = $derived(collectionStore.sortColumn);
-	let sortDirection = $derived(collectionStore.sortDirection);
-	let selectedFormats = $derived(collectionStore.selectedFormats);
-	let selectedTags = $derived(collectionStore.selectedTags);
+	let sortColumn = $derived(settingsStore.sortColumn);
+	let sortDirection = $derived(settingsStore.sortDirection);
+	let selectedFormats = $derived(settingsStore.selectedFormats);
+	let selectedTags = $derived(settingsStore.selectedTags);
 	let activePopover = $state<'format' | 'tags' | null>(null);
 
 	// Derived lists for filters
@@ -109,6 +111,39 @@
 		if (!file.selected) {
 			files.forEach((f) => (f.selected = false));
 			file.selected = true;
+		}
+
+		const selectedFiles = files.filter((f) => f.selected && !f.missing);
+		if (selectedFiles.length > 1) {
+			const unionTags = [...new Set(selectedFiles.flatMap((f) => f.tags))].sort();
+			showContextMenu(event.clientX, event.clientY, [
+				{
+					label: `Add tag to ${selectedFiles.length} files…`,
+					action: () => {
+						batchTagMode = 'add';
+						batchTagIds = selectedFiles.map((f) => f.id);
+						newTagValue = '';
+					}
+				},
+				{
+					label: `Remove tag from selection…`,
+					disabled: unionTags.length === 0,
+					action: () => {
+						batchTagMode = 'remove';
+						batchTagIds = selectedFiles.map((f) => f.id);
+						batchRemoveTagOptions = unionTags;
+						batchRemoveTagValue = unionTags[0] ?? '';
+					}
+				},
+				{ separator: true },
+				{
+					label: 'Remove',
+					action: () => {
+						fileToRemove = file;
+					}
+				}
+			]);
+			return;
 		}
 
 		const isLocked = collectionStore.isLocked(file.id);
@@ -208,10 +243,7 @@
 
 	async function handleFileDragStart(event: DragEvent, file: FileItem) {
 		if (file.missing || !collectionPath) return;
-		event.preventDefault();
-		
-		// If the file is part of selection, drag all selected files
-		// Otherwise, drag just this file
+
 		const selectedFiles = files.filter(f => f.selected && !f.missing);
 		let pathsToDrag: string[] = [];
 
@@ -221,30 +253,23 @@
 			pathsToDrag = [`${collectionPath}/${file.filepath}`.replace(/[\\\/]+/g, '/')];
 		}
 
-		if (pathsToDrag.length > 0) {
-			const iconPath = await resolveResource('static/tauri.svg');
-			collectionStore.isDraggingFromApp = true;
-			try {
-				await startDrag({
-					item: pathsToDrag,
-					icon: iconPath
-				});
-			} finally {
-				collectionStore.isDraggingFromApp = false;
-			}
+		if (pathsToDrag.length > 0 && event.dataTransfer) {
+			event.dataTransfer.effectAllowed = 'copy';
+			event.dataTransfer.setData('text/plain', pathsToDrag.join('\n'));
+			startExternalFileDrag(pathsToDrag);
 		}
 	}
 
 	function toggleSort(col: string) {
-		if (collectionStore.sortColumn === col) {
-			if (collectionStore.sortDirection === 'asc') collectionStore.sortDirection = 'desc';
+		if (settingsStore.sortColumn === col) {
+			if (settingsStore.sortDirection === 'asc') settingsStore.sortDirection = 'desc';
 			else {
-				collectionStore.sortColumn = null;
-				collectionStore.sortDirection = 'asc';
+				settingsStore.sortColumn = null;
+				settingsStore.sortDirection = 'asc';
 			}
 		} else {
-			collectionStore.sortColumn = col;
-			collectionStore.sortDirection = 'asc';
+			settingsStore.sortColumn = col;
+			settingsStore.sortDirection = 'asc';
 		}
 	}
 
@@ -255,18 +280,18 @@
 	}
 
 	function toggleFormatFilter(format: string) {
-		if (collectionStore.selectedFormats.includes(format)) {
-			collectionStore.selectedFormats = collectionStore.selectedFormats.filter((f) => f !== format);
+		if (settingsStore.selectedFormats.includes(format)) {
+			settingsStore.selectedFormats = settingsStore.selectedFormats.filter((f) => f !== format);
 		} else {
-			collectionStore.selectedFormats = [...collectionStore.selectedFormats, format];
+			settingsStore.selectedFormats = [...settingsStore.selectedFormats, format];
 		}
 	}
 
 	function toggleTagFilter(tag: string) {
-		if (collectionStore.selectedTags.includes(tag)) {
-			collectionStore.selectedTags = collectionStore.selectedTags.filter((t) => t !== tag);
+		if (settingsStore.selectedTags.includes(tag)) {
+			settingsStore.selectedTags = settingsStore.selectedTags.filter((t) => t !== tag);
 		} else {
-			collectionStore.selectedTags = [...collectionStore.selectedTags, tag];
+			settingsStore.selectedTags = [...settingsStore.selectedTags, tag];
 		}
 	}
 
@@ -284,19 +309,39 @@
 	// Tagging State
 	let taggingFile = $state<FileItem | null>(null);
 	let newTagValue = $state('');
+	let batchTagMode = $state<'add' | 'remove' | null>(null);
+	let batchTagIds = $state<string[]>([]);
+	let batchRemoveTagOptions = $state<string[]>([]);
+	let batchRemoveTagValue = $state('');
 
 	function closeTagDialog() {
 		taggingFile = null;
 		newTagValue = '';
+		batchTagMode = null;
+		batchTagIds = [];
+		batchRemoveTagOptions = [];
+		batchRemoveTagValue = '';
 	}
 
 	async function handleAddTag() {
+		if (batchTagMode === 'add' && batchTagIds.length > 0) {
+			await collectionStore.batchAddTag(batchTagIds, newTagValue);
+			closeTagDialog();
+			return;
+		}
 		if (taggingFile) {
 			const tag = newTagValue.trim();
 			if (tag && !taggingFile.tags.includes(tag)) {
 				const newTags = [...taggingFile.tags, tag];
 				await collectionStore.updateTags(taggingFile.id, newTags);
 			}
+			closeTagDialog();
+		}
+	}
+
+	async function handleBatchRemoveTag() {
+		if (batchTagMode === 'remove' && batchTagIds.length > 0 && batchRemoveTagValue) {
+			await collectionStore.batchRemoveTag(batchTagIds, batchRemoveTagValue);
 			closeTagDialog();
 		}
 	}
@@ -328,8 +373,11 @@
 		closeRemoveDialog();
 		closeTagDialog();
 	}
-	if (e.key === 'Enter' && taggingFile) {
+	if (e.key === 'Enter' && (taggingFile || batchTagMode === 'add')) {
 		handleAddTag();
+	}
+	if (e.key === 'Enter' && batchTagMode === 'remove') {
+		handleBatchRemoveTag();
 	}
 }} />
 
@@ -359,6 +407,52 @@
 	</div>
 {/if}
 
+{#if batchTagMode === 'add'}
+	<div class="modal-backdrop" onclick={closeTagDialog} role="presentation">
+		<div class="modal-content" onclick={(e) => e.stopPropagation()} role="presentation">
+			<div class="modal-header">
+				<Tag size={24} />
+				<h3>Add tag to {batchTagIds.length} files</h3>
+			</div>
+			<div class="modal-body">
+				<input
+					type="text"
+					class="batch-tag-input"
+					bind:value={newTagValue}
+					placeholder="Tag name"
+					onkeydown={(e) => e.key === 'Enter' && handleAddTag()}
+				/>
+			</div>
+			<div class="modal-footer">
+				<button class="modal-btn secondary" onclick={closeTagDialog}>Cancel</button>
+				<button class="modal-btn primary" onclick={handleAddTag}>Add</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if batchTagMode === 'remove'}
+	<div class="modal-backdrop" onclick={closeTagDialog} role="presentation">
+		<div class="modal-content" onclick={(e) => e.stopPropagation()} role="presentation">
+			<div class="modal-header">
+				<Tag size={24} />
+				<h3>Remove tag from {batchTagIds.length} files</h3>
+			</div>
+			<div class="modal-body">
+				<select class="batch-tag-select" bind:value={batchRemoveTagValue}>
+					{#each batchRemoveTagOptions as tag (tag)}
+						<option value={tag}>{tag}</option>
+					{/each}
+				</select>
+			</div>
+			<div class="modal-footer">
+				<button class="modal-btn secondary" onclick={closeTagDialog}>Cancel</button>
+				<button class="modal-btn primary" onclick={handleBatchRemoveTag}>Remove</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
 <div
 	class="file-list-container"
 	role="presentation"
@@ -382,10 +476,16 @@
 				Open Collection
 			</button>
 		</div>
+	{:else if showSwitchingUi}
+		<div class="empty-state">
+			<Loader2 size={48} class="animate-spin" />
+			<h2>Opening library</h2>
+			<p>{collectionDisplayName(switchingToPath ?? collectionPath)}</p>
+		</div>
 	{:else if loading && files.length === 0}
 		<div class="empty-state">
 			<Loader2 size={48} class="animate-spin" />
-			<p>Scanning files...</p>
+			<p>Scanning files…</p>
 		</div>
 	{:else if files.length === 0}
 		<div class="empty-state">
@@ -394,6 +494,21 @@
 			<p>Try adding some audio files to the folder or drag them here</p>
 		</div>
 	{:else}
+		<div class="file-list-toolbar">
+			<input
+				type="search"
+				class="filename-search"
+				placeholder="Filter by filename…"
+				value={settingsStore.filenameQuery}
+				oninput={(e) => (settingsStore.filenameQuery = e.currentTarget.value)}
+				onkeydown={(e) => {
+					if (e.key === 'Escape') {
+						settingsStore.filenameQuery = '';
+						e.currentTarget.blur();
+					}
+				}}
+			/>
+		</div>
 		<table class="file-table" class:no-checkboxes={!showCheckboxes}>
 		<thead>
 			<tr>
@@ -512,9 +627,9 @@
 					onclick={(e) => handleSelection(e, i)}
 					onkeydown={(e) => e.key === 'Enter' && handleSelection(e as unknown as MouseEvent, i)}
 					oncontextmenu={(e) => handleContextMenu(e, file)}
-					tabindex="0"
 					draggable="true"
 					ondragstart={(e) => handleFileDragStart(e, file)}
+					tabindex="0"
 				>
 					{#if showCheckboxes}
 						<td class="checkbox-col">
@@ -569,7 +684,7 @@
 											onclick={(e) => { e.stopPropagation(); collectionStore.relocateFile(file.id); }}
 											title="Locate file"
 										>
-											<Search size={14} />
+											<FolderSearch size={14} />
 										</button>
 										<button 
 											class="action-icon danger" 
@@ -656,11 +771,54 @@
 
 <style>
 	.file-list-container {
+		position: relative;
 		width: 100%;
 		flex: 1;
 		overflow-y: scroll;
 		scrollbar-gutter: stable;
 		min-height: 0;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.file-list-toolbar {
+		padding: 8px 12px 0;
+		flex-shrink: 0;
+	}
+
+	.filename-search {
+		width: 100%;
+		max-width: 320px;
+		box-sizing: border-box;
+		padding: 6px 10px;
+		font-size: 0.85rem;
+		background: var(--sidebar-bg);
+		border: 1px solid var(--border-color);
+		border-radius: 4px;
+		color: var(--text-color);
+		outline: none;
+	}
+
+	.filename-search:focus {
+		border-color: var(--icon-active);
+	}
+
+	.batch-tag-input,
+	.batch-tag-select {
+		width: 100%;
+		padding: 8px 10px;
+		font-size: 0.9rem;
+		background: var(--sidebar-bg);
+		border: 1px solid var(--border-color);
+		border-radius: 4px;
+		color: var(--text-color);
+		box-sizing: border-box;
+	}
+
+	.modal-btn.primary {
+		background: var(--icon-active);
+		color: var(--bg-color);
+		border: none;
 	}
 
 	.file-table {

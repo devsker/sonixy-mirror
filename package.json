@@ -1,6 +1,6 @@
 {
 	"name": "sonixy",
-	"version": "0.2.2",
+	"version": "0.3.0",
 	"description": "simple audio collection manager",
 	"type": "module",
 	"scripts": {
@@ -21,27 +21,27 @@
 		"@tauri-apps/plugin-dialog": "^2.7.1",
 		"@tauri-apps/plugin-fs": "^2.5.1",
 		"@tauri-apps/plugin-opener": "^2.5.4",
-		"jiti": "^2.6.1",
+		"jiti": "^2.7.0",
 		"lucide-svelte": "^1.0.1",
 		"webview-window": "link:@tauri-apps/api/webview-window"
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",
 		"@sveltejs/adapter-static": "^3.0.10",
-		"@sveltejs/kit": "^2.59.0",
+		"@sveltejs/kit": "^2.61.1",
 		"@sveltejs/vite-plugin-svelte": "^5.1.1",
-		"@tauri-apps/cli": "^2.11.0",
-		"eslint": "^10.3.0",
+		"@tauri-apps/cli": "^2.11.2",
+		"eslint": "^10.4.1",
 		"eslint-config-prettier": "^10.1.8",
-		"eslint-plugin-svelte": "^3.17.1",
+		"eslint-plugin-svelte": "^3.19.0",
 		"globals": "^17.6.0",
 		"prettier": "^3.8.3",
-		"prettier-plugin-svelte": "^3.5.1",
-		"svelte": "^5.55.5",
-		"svelte-check": "^4.4.7",
-		"svelte-eslint-parser": "^1.6.0",
+		"prettier-plugin-svelte": "^3.5.2",
+		"svelte": "^5.56.0",
+		"svelte-check": "^4.4.8",
+		"svelte-eslint-parser": "^1.7.0",
 		"typescript": "~5.6.3",
-		"typescript-eslint": "^8.59.1",
+		"typescript-eslint": "^8.60.0",
 		"vite": "^6.4.2"
 	}
 }

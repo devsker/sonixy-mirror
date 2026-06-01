@@ -3,6 +3,7 @@
 	import Waveform from '$lib/components/Waveform.svelte';
 	import { collectionStore } from '$lib/collection-store.svelte';
 	import { audioPlayer } from '$lib/audio-player.svelte';
+	import { collectionDisplayName } from '$lib/collection-path';
 
 	let selectedIds = $state<string[]>([]);
 
@@ -16,18 +17,24 @@
 </script>
 
 <div class="page-container">
-	{#if collectionStore.collectionPath}
-		<div class="waveform-section">
-			{#if displayId}
-				<Waveform id={displayId} />
-			{:else if selectedIds.length > 1}
-				<div class="selection-message">More than one file selected</div>
-            {:else}
-				<div class="selection-message">No file selected</div>
-			{/if}
-		</div>
-	{/if}
-	<FileList onSelectionChange={handleSelectionChange} />
+	{#key collectionStore.collectionPath}
+		{#if collectionStore.collectionPath}
+			<div class="waveform-section">
+				{#if collectionStore.showSwitchingUi}
+					<div class="selection-message switching">
+						Opening {collectionDisplayName(collectionStore.switchingToPath ?? collectionStore.collectionPath)}…
+					</div>
+				{:else if displayId}
+					<Waveform id={displayId} />
+				{:else if selectedIds.length > 1}
+					<div class="selection-message">More than one file selected</div>
+				{:else}
+					<div class="selection-message">No file selected</div>
+				{/if}
+			</div>
+		{/if}
+		<FileList onSelectionChange={handleSelectionChange} />
+	{/key}
 </div>
 
 <style>
@@ -53,5 +60,10 @@
 		color: var(--text-muted);
 		font-size: 13px;
 		font-style: italic;
+	}
+
+	.selection-message.switching {
+		font-style: normal;
+		color: var(--icon-active);
 	}
 </style>

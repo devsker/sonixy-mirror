@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { remove } from '@tauri-apps/plugin-fs';
 import { audioPlayer } from './audio-player.svelte';
 import { settingsStore } from './settings-store.svelte';
+import { collectionPathsEqual } from './collection-path';
 
 export interface FileItem {
     id: string;
@@ -34,10 +35,18 @@ export interface Task {
     pauseStartTime?: number;
 }
 
+const SWITCH_UI_DELAY_MS = 300;
+
 class CollectionStore {
     files = $state<FileItem[]>([]);
     collectionPath = $state<string | null>(null);
     loading = $state(false);
+    /** True while a collection switch is in progress (blocks duplicate switches). */
+    switchingCollection = $state(false);
+    /** True only after switch exceeds SWITCH_UI_DELAY_MS (drives loading overlays). */
+    showSwitchingUi = $state(false);
+    switchingToPath = $state<string | null>(null);
+    private switchingUiTimer: ReturnType<typeof setTimeout> | null = null;
     pendingRelocate = $state<{id: string, path: string} | null>(null);
     tasks = $state<Task[]>([]);
     processingPaused = $state(false);
@@ -47,26 +56,23 @@ class CollectionStore {
     partialWaveforms = $state<Record<string, number[]>>({});
     isDraggingFromApp = $state(false);
 
-    // Filter & Sort State
-    sortColumn = $state<string | null>(null);
-    sortDirection = $state<'asc' | 'desc'>('asc');
-    selectedFormats = $state<string[]>([]);
-    selectedTags = $state<string[]>([]);
-
     displayedFiles = $derived.by(() => {
         let result = [...this.files];
 
-        // Apply Filters
-        if (this.selectedFormats.length > 0) {
-            result = result.filter((f) => this.selectedFormats.includes(f.format));
-        }
-        if (this.selectedTags.length > 0) {
-            result = result.filter((f) => f.tags.some((t) => this.selectedTags.includes(t)));
+        const query = settingsStore.filenameQuery.trim().toLowerCase();
+        if (query) {
+            result = result.filter((f) => f.filename.toLowerCase().includes(query));
         }
 
-        // Apply Sorting
-        const col = this.sortColumn;
-        const dir = this.sortDirection;
+        if (settingsStore.selectedFormats.length > 0) {
+            result = result.filter((f) => settingsStore.selectedFormats.includes(f.format));
+        }
+        if (settingsStore.selectedTags.length > 0) {
+            result = result.filter((f) => f.tags.some((t) => settingsStore.selectedTags.includes(t)));
+        }
+
+        const col = settingsStore.sortColumn;
+        const dir = settingsStore.sortDirection;
 
         if (col) {
             result.sort((a, b) => {
@@ -127,16 +133,14 @@ class CollectionStore {
             // Listen for waveform started
             listen('waveform-started', (event) => {
                 const id = event.payload as string;
-                this.currentlyProcessingIds.add(id);
-                this.currentlyProcessingIds = new Set(this.currentlyProcessingIds);
-                
-                // Clear old progress data when starting fresh
+                // Normalization uses a synthetic id; only track real work units.
+                if (!id.endsWith('-normalizing')) {
+                    this.currentlyProcessingIds.add(id);
+                    this.currentlyProcessingIds = new Set(this.currentlyProcessingIds);
+                }
+
                 delete this.waveformProgress[id];
                 delete this.partialWaveforms[id];
-
-                if (id.endsWith('-converting')) {
-                    this.updateConversionTaskProgress();
-                }
             });
 
             // Listen for waveform progress
@@ -153,11 +157,6 @@ class CollectionStore {
                     }
                 }
 
-                if (payload.id.endsWith('-converting')) {
-                    this.updateConversionTaskProgress();
-                } else {
-                    this.updateWaveformTaskProgress();
-                }
             });
 
             // Listen for waveform generation
@@ -170,14 +169,17 @@ class CollectionStore {
                     const task = this.tasks.find(t => t.id === 'conversions');
                     if (task && task.completed !== undefined) {
                         task.completed++;
-                        this.updateConversionTaskProgress();
+                        this.currentlyProcessingIds.delete(id);
+                        this.currentlyProcessingIds = new Set(this.currentlyProcessingIds);
+                        delete this.waveformProgress[id];
                         if (task.completed >= (task.total || 0)) {
-                            this.updateTask(task.id, { status: 'completed' });
+                            this.updateTask(task.id, { status: 'completed', progress: 100 });
+                        } else {
+                            this.syncBatchTask('conversions');
                         }
                     }
 
-                    // Refresh file list to see the new MP3
-                    this.refresh();
+                    this.reloadFiles();
                 } else {
                     // Update file gain in store
                     const file = this.files.find(f => f.id === id);
@@ -194,9 +196,11 @@ class CollectionStore {
                     const task = this.tasks.find(t => t.id === 'waveforms');
                     if (task && task.total !== undefined && task.completed !== undefined) {
                         task.completed++;
-                        this.updateWaveformTaskProgress();
+                        delete this.waveformProgress[id];
                         if (task.completed >= task.total) {
-                            this.updateTask(task.id, { status: 'completed', eta: undefined });
+                            this.updateTask(task.id, { status: 'completed', progress: 100, eta: undefined });
+                        } else {
+                            this.syncBatchTask('waveforms');
                         }
                     }
                 }
@@ -206,29 +210,53 @@ class CollectionStore {
 
     private static readonly ETA_WINDOW_MS = 20_000;
 
-    private computeEtaMessage(task: Task, accurateCompleted: number): string {
-        if (task.total === undefined || accurateCompleted <= 0) return '';
+    /** Batch task percent: finished count over total (matches the X / Y message). */
+    private batchTaskPercent(task: Task): number {
+        if (task.status === 'completed') return 100;
+        if (task.total === undefined || task.completed === undefined) return task.progress;
+        if (task.total === 0) return 100;
+        return Math.min(100, (task.completed / task.total) * 100);
+    }
+
+    private syncBatchTask(taskId: 'waveforms' | 'conversions'): void {
+        const task = this.tasks.find((t) => t.id === taskId);
+        if (!task || task.total === undefined || task.completed === undefined) return;
+
+        task.progress = this.batchTaskPercent(task);
+
+        const etaMessage =
+            task.status !== 'paused' ? this.computeEtaMessage(task) : '';
+        task.eta = etaMessage || undefined;
+
+        if (taskId === 'waveforms') {
+            task.message = `${task.completed} / ${task.total} waveforms${etaMessage}`;
+        } else {
+            task.message = `Standardizing ${task.completed} / ${task.total} files${etaMessage}`;
+        }
+    }
+
+    private computeEtaMessage(task: Task): string {
+        if (task.total === undefined || task.completed === undefined || task.completed <= 0) return '';
+        const unitsDone = task.completed;
         const now = Date.now();
 
         if (!task.progressHistory) task.progressHistory = [];
-        task.progressHistory.push({ time: now, completed: accurateCompleted });
+        task.progressHistory.push({ time: now, completed: unitsDone });
 
-        // Drop samples older than the window
         const cutoff = now - CollectionStore.ETA_WINDOW_MS;
         while (task.progressHistory.length > 1 && task.progressHistory[0].time < cutoff) {
             task.progressHistory.shift();
         }
 
-        // Need at least two samples to measure rate
         const oldest = task.progressHistory[0];
         const newest = task.progressHistory[task.progressHistory.length - 1];
         const windowMs = newest.time - oldest.time;
         if (windowMs < 500) return '';
 
-        const rate = (newest.completed - oldest.completed) / (windowMs / 1000); // items/sec
+        const rate = (newest.completed - oldest.completed) / (windowMs / 1000);
         if (!isFinite(rate) || rate <= 0) return '';
 
-        const remainingSeconds = (task.total - accurateCompleted) / rate;
+        const remainingSeconds = (task.total - unitsDone) / rate;
         if (!isFinite(remainingSeconds) || remainingSeconds <= 0) return '';
 
         if (remainingSeconds < 60) {
@@ -237,36 +265,6 @@ class CollectionStore {
         const mins = Math.floor(remainingSeconds / 60);
         const secs = Math.round(remainingSeconds % 60);
         return ` - ${mins}m ${secs}s remaining`;
-    }
-
-    private updateWaveformTaskProgress() {
-        const task = this.tasks.find(t => t.id === 'waveforms');
-        if (!task || task.total === undefined || task.completed === undefined) return;
-
-        const currentFilesProgress = Object.entries(this.waveformProgress)
-            .filter(([id]) => !id.endsWith('-converting'))
-            .reduce((acc, [_, p]) => acc + p, 0);
-
-        const accurateCompleted = Math.min(task.completed + currentFilesProgress, task.total);
-        task.progress = (accurateCompleted / task.total) * 100;
-        const etaMessage = task.status !== 'paused' ? this.computeEtaMessage(task, accurateCompleted) : '';
-        task.eta = etaMessage || undefined;
-        task.message = `${task.completed} / ${task.total} waveforms${etaMessage}`;
-    }
-
-    private updateConversionTaskProgress() {
-        const task = this.tasks.find(t => t.id === 'conversions');
-        if (!task || task.total === undefined || task.completed === undefined) return;
-
-        const currentFilesProgress = Object.entries(this.waveformProgress)
-            .filter(([id]) => id.endsWith('-converting'))
-            .reduce((acc, [_, p]) => acc + p, 0);
-
-        const accurateCompleted = Math.min(task.completed + currentFilesProgress, task.total);
-        task.progress = (accurateCompleted / task.total) * 100;
-        const etaMessage = task.status !== 'paused' ? this.computeEtaMessage(task, accurateCompleted) : '';
-        task.eta = etaMessage || undefined;
-        task.message = `Standardizing ${task.completed} / ${task.total} files${etaMessage}`;
     }
 
     private handleCollectionResult(result: { files: Omit<FileItem, 'selected'>[], waveform_ids: string[], conversion_ids: string[] }) {
@@ -284,7 +282,7 @@ class CollectionStore {
             if (task) {
                 task.total = (task.total || 0) + result.conversion_ids.length;
                 task.status = 'running';
-                this.updateConversionTaskProgress();
+                this.syncBatchTask('conversions');
             } else {
                 this.addTask({
                     id: 'conversions',
@@ -305,7 +303,7 @@ class CollectionStore {
                 task.total = (task.total || 0) + totalWaveformsNeeded;
                 task.status = 'running';
                 if (!task.startTime) task.startTime = Date.now();
-                this.updateWaveformTaskProgress();
+                this.syncBatchTask('waveforms');
             } else {
                 this.addTask({
                     id: 'waveforms',
@@ -333,8 +331,10 @@ class CollectionStore {
         if (task) {
             const statusChanged = updates.status && updates.status !== task.status;
             Object.assign(task, updates);
-            if (task.total !== undefined && task.completed !== undefined) {
-                task.progress = (task.completed / task.total) * 100;
+            if (task.id === 'waveforms' || task.id === 'conversions') {
+                this.syncBatchTask(task.id);
+            } else if (updates.progress === undefined && task.total !== undefined && task.completed !== undefined) {
+                task.progress = this.batchTaskPercent(task);
             }
             if (statusChanged && (task.status === 'completed' || task.status === 'failed')) {
                 setTimeout(() => this.removeTask(id), 5000);
@@ -350,9 +350,51 @@ class CollectionStore {
         return this.processingFiles.has(id);
     }
 
-    async openCollectionByPath(path: string) {
+    private beginSwitchingUi(path: string) {
+        this.endSwitchingUiTimer();
+        this.switchingCollection = true;
+        this.showSwitchingUi = false;
+        this.switchingToPath = path;
+        this.switchingUiTimer = setTimeout(() => {
+            if (!this.switchingCollection) return;
+            this.showSwitchingUi = true;
+            this.files = [];
+        }, SWITCH_UI_DELAY_MS);
+    }
+
+    private endSwitchingUiTimer() {
+        if (this.switchingUiTimer) {
+            clearTimeout(this.switchingUiTimer);
+            this.switchingUiTimer = null;
+        }
+    }
+
+    private endSwitchingUi() {
+        this.endSwitchingUiTimer();
+        this.switchingCollection = false;
+        this.showSwitchingUi = false;
+        this.switchingToPath = null;
+    }
+
+    async openCollectionByPath(path: string, options?: { force?: boolean }) {
+        if (this.switchingCollection) {
+            if (!options?.force) return;
+            this.endSwitchingUi();
+        }
+        if (
+            !options?.force &&
+            collectionPathsEqual(this.collectionPath, path) &&
+            this.files.length > 0
+        ) {
+            return;
+        }
+
+        const previousPath = this.collectionPath;
+        settingsStore.stashCollectionUi(previousPath);
+
         try {
             audioPlayer.stop();
+            this.beginSwitchingUi(path);
             this.loading = true;
             this.collectionPath = path;
             this.processingFiles = new Set();
@@ -361,14 +403,37 @@ class CollectionStore {
             this.currentlyProcessingIds = new Set();
             this.waveformProgress = {};
             this.partialWaveforms = {};
-            const result = await invoke<{ files: Omit<FileItem, 'selected'>[], waveform_ids: string[], conversion_ids: string[] }>('open_collection', { path });
+            this.pendingRelocate = null;
+
+            const result = await invoke<{
+                files: Omit<FileItem, 'selected'>[];
+                waveform_ids: string[];
+                conversion_ids: string[];
+            }>('switch_collection', { path });
+
             this.handleCollectionResult(result);
+            settingsStore.applyCollectionUi(path);
             localStorage.setItem('lastCollectionPath', path);
+            settingsStore.addRecentCollection(path);
         } catch (e) {
-            console.error('Failed to auto-open collection', e);
-            this.collectionPath = null;
-            localStorage.removeItem('lastCollectionPath');
+            console.error('Failed to open collection', e);
+            if (previousPath && !collectionPathsEqual(previousPath, path)) {
+                this.collectionPath = previousPath;
+                try {
+                    await this.reloadFiles();
+                    settingsStore.applyCollectionUi(previousPath);
+                } catch {
+                    this.collectionPath = null;
+                    this.files = [];
+                    localStorage.removeItem('lastCollectionPath');
+                }
+            } else {
+                this.collectionPath = null;
+                this.files = [];
+                localStorage.removeItem('lastCollectionPath');
+            }
         } finally {
+            this.endSwitchingUi();
             this.loading = false;
         }
     }
@@ -382,19 +447,30 @@ class CollectionStore {
             });
 
             if (selected) {
-                await this.openCollectionByPath(selected as string);
+                await this.openCollectionByPath(selected as string, { force: true });
             }
         } catch (e) {
             console.error('Failed to open collection', e);
         }
     }
 
+    async reloadFiles() {
+        if (!this.collectionPath) return;
+        const selectedIds = new Set(this.files.filter((f) => f.selected).map((f) => f.id));
+        const result = await invoke<Omit<FileItem, 'selected'>[]>('get_collection_files');
+        this.files = result.map((f) => ({ ...f, selected: selectedIds.has(f.id) }));
+    }
+
     async refresh() {
         if (!this.collectionPath) return;
         try {
             this.loading = true;
-            const result = await invoke<Omit<FileItem, 'selected'>[]>('get_collection_files');
-            this.files = result.map(f => ({ ...f, selected: false }));
+            const selectedIds = new Set(this.files.filter((f) => f.selected).map((f) => f.id));
+            const result = await invoke<{ files: Omit<FileItem, 'selected'>[], waveform_ids: string[], conversion_ids: string[] }>('rescan_collection');
+            this.handleCollectionResult(result);
+            for (const file of this.files) {
+                file.selected = selectedIds.has(file.id);
+            }
         } catch (e) {
             console.error('Failed to refresh collection', e);
         } finally {
@@ -644,7 +720,6 @@ class CollectionStore {
             const updatedItem = await invoke<Omit<FileItem, 'selected'>>('update_file_tags', { id, tags });
             const index = this.files.findIndex(f => f.id === id);
             if (index !== -1) {
-                // Keep the selection state
                 const selected = this.files[index].selected;
                 this.files[index] = { ...updatedItem, selected };
             }
@@ -653,6 +728,29 @@ class CollectionStore {
             throw e;
         }
     }
+
+    async batchAddTag(ids: string[], tag: string) {
+        const trimmed = tag.trim();
+        if (!trimmed) return;
+        for (const id of ids) {
+            const file = this.files.find((f) => f.id === id);
+            if (!file || file.missing || this.isLocked(id)) continue;
+            if (!file.tags.includes(trimmed)) {
+                await this.updateTags(id, [...file.tags, trimmed]);
+            }
+        }
+    }
+
+    async batchRemoveTag(ids: string[], tag: string) {
+        for (const id of ids) {
+            const file = this.files.find((f) => f.id === id);
+            if (!file || file.missing || this.isLocked(id)) continue;
+            if (file.tags.includes(tag)) {
+                await this.updateTags(id, file.tags.filter((t) => t !== tag));
+            }
+        }
+    }
+
 }
 
 export const collectionStore = new CollectionStore();

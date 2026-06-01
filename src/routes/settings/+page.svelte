@@ -1,15 +1,18 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
-	import { settingsStore, type Settings, type TitlebarLayout } from '$lib/settings-store.svelte';
+	import { settingsStore } from '$lib/settings-store.svelte';
+	import { version } from '../../../package.json';
 	import { collectionStore } from '$lib/collection-store.svelte';
+	import { getDefaultTitlebarLayout, type TitlebarStyleSetting } from '$lib/platform';
 	import TitlebarVisualizer from '$lib/components/TitlebarVisualizer.svelte';
 
-	const settings = getContext<Settings>('settings-context') || settingsStore;
+	const settings = getContext<typeof settingsStore>('settings-context') || settingsStore;
 
 	let theme = $derived(settings.theme);
 	let showCheckboxes = $derived(settings.showCheckboxes);
 	let normalizeOnImport = $derived(settings.normalizeOnImport);
 	let playbackDelay = $derived(settings.playbackDelay);
+	let titlebarStyle = $derived(settings.titlebarStyle);
 
 	function handleThemeChange(e: Event) {
 		settings.theme = (e.target as HTMLSelectElement).value as 'system' | 'dark' | 'light';
@@ -26,6 +29,11 @@
 	function handlePlaybackDelayChange(e: Event) {
 		settings.playbackDelay = parseInt((e.target as HTMLInputElement).value, 10);
 	}
+
+	function handleTitlebarStyleChange(e: Event) {
+		settings.titlebarStyle = (e.target as HTMLSelectElement).value as TitlebarStyleSetting;
+	}
+
 </script>
 
 <div class="settings-page">
@@ -64,21 +72,36 @@
 			</div>
 
 			<div class="setting-item">
+				<label for="titlebarStyle">Titlebar style</label>
+				<div class="select-wrapper">
+					<select id="titlebarStyle" value={titlebarStyle} onchange={handleTitlebarStyleChange}>
+						<option value="auto">Auto (match OS)</option>
+						<option value="macos">macOS</option>
+						<option value="windows">Windows</option>
+						<option value="linux">Linux</option>
+					</select>
+				</div>
+				<p class="description">
+					Controls window buttons and the default layout preset. Auto uses macOS traffic lights on Mac,
+					Windows controls on Windows, and GNOME-style header buttons on Linux.
+				</p>
+			</div>
+
+			<div class="setting-item">
 				<h3>Titlebar Layout</h3>
 				<TitlebarVisualizer {settings} />
 				<button
 					class="reset-btn"
 					onclick={() =>
-						(settings.titlebarLayout = [
-                            'section:left', 'title', 'folder',
-                            'section:center', 'playback', 'volume',
-                            'section:right', 'tasks', 'refresh', 'window-controls'
-                        ])}
+						(settings.titlebarLayout = getDefaultTitlebarLayout({
+							styleSetting: settings.titlebarStyle
+						}))}
 				>
 					Reset Titlebar Layout
 				</button>
 				<p class="description">
-					Drag and drop elements to customize the titlebar layout. Drag elements out of the titlebar to remove them.
+					Drag and drop elements to customize the titlebar layout. Window controls are always pinned
+					(left on macOS, right on Windows and Linux) and are not movable.
 				</p>
 			</div>
 
@@ -95,7 +118,7 @@
 			<h2>Playback</h2>
 
 			<div class="setting-item">
-				<label for="playbackDelay">Loop Delay (ms)</label>
+				<label for="playbackDelay">Replay delay (ms)</label>
 				<input 
 					type="range" 
 					id="playbackDelay" 
@@ -106,12 +129,45 @@
 					oninput={handlePlaybackDelayChange}
 				/>
 				<div class="range-value">{playbackDelay}ms</div>
-				<p class="description">The delay before replaying audio files shorter than 2 seconds. Longer files loop immediately.</p>
+				<p class="description">Pause before replaying clips shorter than 2 seconds. Longer clips replay immediately when they end.</p>
+			</div>
+
+			<div class="setting-item">
+				<h3>Keyboard shortcuts</h3>
+				<ul class="shortcut-list">
+					<li><kbd>Space</kbd> Play / pause</li>
+					<li><kbd>←</kbd> <kbd>→</kbd> Previous / next file</li>
+					<li><kbd>M</kbd> Mute / unmute</li>
+					<li><kbd>Esc</kbd> Stop playback</li>
+				</ul>
 			</div>
 		</section>
 
 		<section class="settings-section">
 			<h2>Collection</h2>
+
+			{#if settings.recentCollections.length > 0}
+				<div class="setting-item">
+					<h3>Recent libraries</h3>
+					<ul class="recent-list">
+						{#each settings.recentCollections as path (path)}
+							<li class="recent-list-item">
+								<button type="button" class="recent-open-btn" onclick={() => collectionStore.openCollectionByPath(path)}>
+									{path}
+								</button>
+								<button
+									type="button"
+									class="recent-remove-btn"
+									aria-label="Remove from recent"
+									onclick={() => settingsStore.removeRecentCollection(path)}
+								>
+									×
+								</button>
+							</li>
+						{/each}
+					</ul>
+				</div>
+			{/if}
 			
 			<div class="setting-item">
 				<div class="checkbox-setting">
@@ -140,7 +196,7 @@
 
 		<section class="settings-section">
 			<h2>About</h2>
-			<p>Sonixy v0.1.0</p>
+			<p>Sonixy v{version}</p>
 		</section>
 	</div>
 </div>
@@ -361,5 +417,80 @@
 
 	:global(html.dark) .custom-checkbox input:checked ~ .checkmark:after {
 		border-color: #1e1e1e;
+	}
+
+	.shortcut-list {
+		margin: 0;
+		padding-left: 0;
+		list-style: none;
+		font-size: 0.9rem;
+		color: var(--text-muted);
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.shortcut-list kbd {
+		display: inline-block;
+		min-width: 1.5em;
+		padding: 2px 6px;
+		font-family: inherit;
+		font-size: 0.85em;
+		background: var(--sidebar-bg);
+		border: 1px solid var(--border-color);
+		border-radius: 3px;
+	}
+
+	.recent-list {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		max-width: 600px;
+	}
+
+	.recent-list-item {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.recent-open-btn {
+		flex: 1;
+		text-align: left;
+		background: var(--sidebar-bg);
+		border: 1px solid var(--border-color);
+		color: var(--text-color);
+		padding: 8px 12px;
+		border-radius: 4px;
+		font-size: 0.85rem;
+		cursor: pointer;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.recent-open-btn:hover {
+		border-color: var(--icon-color);
+	}
+
+	.recent-remove-btn {
+		background: none;
+		border: 1px solid var(--border-color);
+		color: var(--text-muted);
+		width: 28px;
+		height: 28px;
+		border-radius: 4px;
+		cursor: pointer;
+		font-size: 1.1rem;
+		line-height: 1;
+		flex-shrink: 0;
+	}
+
+	.recent-remove-btn:hover {
+		color: var(--text-color);
+		border-color: var(--icon-color);
 	}
 </style>

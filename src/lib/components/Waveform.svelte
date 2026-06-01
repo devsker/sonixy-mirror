@@ -2,18 +2,17 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 	import { onMount } from 'svelte';
-	import { fade } from 'svelte/transition';
 	import { audioPlayer } from '$lib/audio-player.svelte';
 	import { collectionStore } from '$lib/collection-store.svelte';
-	import { startDrag } from '@crabnebula/tauri-plugin-drag';
+	import { startExternalFileDrag } from '$lib/file-drag';
 
 	interface Props {
-		height?: number;
+		height?: number | string;
 		color?: string;
 		id?: string;
 	}
 
-	let { height = 60, color = 'var(--icon-active)', id = '' }: Props = $props();
+	let { height = '100%', color = 'var(--icon-active)', id = '' }: Props = $props();
 
 	let waveformData = $state<number[] | null>(null);
 	let isLoading = $state(true);
@@ -56,10 +55,10 @@
 
 	$effect(() => {
 		isLoading = true;
-		// Reset selection when ID changes
 		selectionStart = null;
 		selectionEnd = null;
 		dragClipPath = null;
+		audioPlayer.clearAbLoop();
 		fetchWaveform();
 	});
 
@@ -126,11 +125,24 @@
 		return null;
 	});
 
+	function applySelectionAbLoop(start: number, end: number) {
+		audioPlayer.setAbLoop(start, end);
+		const file = collectionStore.files.find((f) => f.id === id);
+		if (!file || file.missing) return;
+
+		if (audioPlayer.currentFileId !== id) {
+			audioPlayer.play(file);
+		} else {
+			audioPlayer.seek(start);
+		}
+	}
+
 	function onMouseDown(e: MouseEvent) {
 		if (e.button !== 0 || isLocked) return;
 		// Don't start a new selection if clicking on the existing one to drag it
 		if ((e.target as Element).closest('.selection-rect')) return;
 
+		audioPlayer.clearAbLoop();
 		dragStartPos = e.clientX;
 		currentPos = e.clientX;
 		isDragging = true;
@@ -161,18 +173,18 @@
 		const getPct = (x: number) => Math.max(0, Math.min(1, (x - rect.left) / rect.width));
 
 		if (diff < 5) {
-			// Small movement is a seek
 			if (audioPlayer.currentFileId === id) {
 				audioPlayer.seek(getPct(e.clientX));
 			}
 		} else {
-			// Selection finalized
 			const p1 = getPct(dragStartPos!);
 			const p2 = getPct(e.clientX);
 			selectionStart = Math.min(p1, p2);
 			selectionEnd = Math.max(p1, p2);
 
 			if (selectionEnd - selectionStart > 0.001) {
+				applySelectionAbLoop(selectionStart, selectionEnd);
+
 				isPreparingClip = true;
 				try {
 					dragClipPath = await invoke<string>('prepare_drag_clip', {
@@ -191,28 +203,12 @@
 		currentPos = null;
 	}
 
-	async function handleDragStart(e: DragEvent) {
-		if (!dragClipPath) {
-			e.preventDefault();
-			return;
-		}
-		collectionStore.isDraggingFromApp = true;
-		try {
-			await startDrag({
-				item: [dragClipPath],
-				icon: 'tauri.svg'
-			});
-		} finally {
-			collectionStore.isDraggingFromApp = false;
-		}
-	}
-
 	function getBarHeight(val: number) {
-		if (!val || isNaN(val) || val <= 0) return 0;
-		const minHeight = 1;
+		const minHeight = 2;
+		if (!val || isNaN(val) || val <= 0) return minHeight;
 		// Use a slight non-linear scaling to make low volumes more visible
 		const boosted = Math.pow(val, 0.8);
-		const scaledHeight = boosted * 90;
+		const scaledHeight = boosted * 92;
 		return Math.max(minHeight, scaledHeight);
 	}
 </script>
@@ -220,7 +216,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
 	class="waveform-container"
-	style="height: {height}px"
+	style="height: {typeof height === 'number' ? height + 'px' : height}"
 	onmousemove={onMouseMove}
 	onmouseup={onMouseUp}
 	onmouseleave={() => {
@@ -316,19 +312,11 @@
 				stroke="var(--selection-color)"
 				stroke-opacity="0.8"
 				stroke-width="1"
-				onmousedown={async (e) => {
+				onmousedown={(e) => {
 					e.stopPropagation();
 					e.preventDefault();
 					if (dragClipPath) {
-						collectionStore.isDraggingFromApp = true;
-						try {
-							await startDrag({
-								item: [dragClipPath],
-								icon: 'tauri.svg'
-							});
-						} finally {
-							collectionStore.isDraggingFromApp = false;
-						}
+						startExternalFileDrag([dragClipPath]);
 					}
 				}}
 				class="selection-rect"
@@ -343,7 +331,7 @@
 	.waveform-container {
 		width: 100%;
 		height: 100%;
-		padding: 12px 16px;
+		padding: 4px 16px;
 		box-sizing: border-box;
 		display: flex;
 		align-items: center;
@@ -420,7 +408,7 @@
 	}
 
 	:global(html:not(.dark)) .hover-line {
-		stroke: #ffffff;
+		stroke: #007acc;
 		opacity: 0.8;
 	}
 </style>
