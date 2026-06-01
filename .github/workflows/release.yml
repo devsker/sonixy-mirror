@@ -74,31 +74,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev patchelf
 
-      - name: Import Apple Developer certificate
-        if: matrix.platform == 'macos-latest'
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          if [ -z "$APPLE_CERTIFICATE" ]; then
-            echo "APPLE_CERTIFICATE not set; macOS build will be unsigned."
-            exit 0
-          fi
-          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
-          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security set-keychain-settings -t 3600 -u build.keychain
-          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-          CERT_ID=$(security find-identity -v -p codesigning build.keychain | grep -E 'Developer ID Application|Apple Development' | head -1 | awk -F'"' '{print $2}')
-          if [ -z "$CERT_ID" ]; then
-            echo "No code signing identity found in imported certificate."
-            exit 1
-          fi
-          echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> "$GITHUB_ENV"
-
       - name: Import Windows code signing certificate
         if: matrix.platform == 'windows-latest'
         shell: pwsh
@@ -120,30 +95,10 @@ jobs:
             -Password (ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText)
           "WINDOWS_CERTIFICATE_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
 
-      - name: Write App Store Connect API key
-        if: matrix.platform == 'macos-latest'
-        env:
-          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
-        run: |
-          if [ -z "$APPLE_API_KEY_CONTENT" ]; then
-            exit 0
-          fi
-          printf '%s' "$APPLE_API_KEY_CONTENT" > "${{ runner.temp }}/AuthKey.p8"
-
       - name: Build Sonixy and publish release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS signing & notarization (https://v2.tauri.app/distribute/sign/macos/)
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
         with:
           tauriScript: pnpm tauri
           tagName: >-
@@ -157,12 +112,12 @@ jobs:
 
             ### Installation
             - **Windows**: `.msi` or `.exe` (NSIS) installer
-            - **macOS**: `.dmg` (Apple Silicon + Intel universal build)
+            - **macOS**: `.dmg` (Apple Silicon + Intel universal build, unsigned — right-click → Open on first launch)
             - **Linux**: `.AppImage` or `.deb` package
           generateReleaseNotes: true
           releaseDraft: false
           prerelease: false
           uploadWorkflowArtifacts: ${{ github.event_name == 'workflow_dispatch' && inputs.create_release == false }}
           args: >-
-            ${{ matrix.platform == 'macos-latest' && '--target universal-apple-darwin' || '' }}
+            ${{ matrix.platform == 'macos-latest' && '--target universal-apple-darwin --config {"bundle":{"macOS":{"signingIdentity":"-"}}}' || '' }}
             ${{ matrix.platform == 'windows-latest' && env.WINDOWS_CERTIFICATE_THUMBPRINT != '' && format('--config {{"bundle":{{"windows":{{"certificateThumbprint":"{0}","digestAlgorithm":"sha256","timestampUrl":"http://timestamp.digicert.com"}}}}}}', env.WINDOWS_CERTIFICATE_THUMBPRINT) || '' }}
