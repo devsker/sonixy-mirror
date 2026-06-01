@@ -4,7 +4,7 @@
 	import { onMount } from 'svelte';
 	import { audioPlayer } from '$lib/audio-player.svelte';
 	import { collectionStore } from '$lib/collection-store.svelte';
-	import { startExternalFileDrag } from '$lib/file-drag';
+	import { externalFileDrag } from '$lib/file-drag';
 
 	interface Props {
 		height?: number | string;
@@ -185,15 +185,29 @@
 			if (selectionEnd - selectionStart > 0.001) {
 				applySelectionAbLoop(selectionStart, selectionEnd);
 
+				const file = collectionStore.files.find((f) => f.id === id);
+				const collectionPath = collectionStore.collectionPath;
+				const sourcePath =
+					file && collectionPath
+						? `${collectionPath}/${file.filepath}`.replace(/[\\/]+/g, '/')
+						: undefined;
+
 				isPreparingClip = true;
 				try {
+					console.log('prepare_drag_clip', {
+						sourcePath,
+						id,
+						startPct: selectionStart,
+						endPct: selectionEnd
+					});
 					dragClipPath = await invoke<string>('prepare_drag_clip', {
 						id,
 						startPct: selectionStart,
 						endPct: selectionEnd
 					});
+					console.log('prepare_drag_clip done', { sourcePath, destPath: dragClipPath });
 				} catch (err) {
-					console.error('Failed to prepare drag clip:', err);
+					console.error('Failed to prepare drag clip:', err, { sourcePath });
 				} finally {
 					isPreparingClip = false;
 				}
@@ -312,12 +326,12 @@
 				stroke="var(--selection-color)"
 				stroke-opacity="0.8"
 				stroke-width="1"
+				use:externalFileDrag={{
+					disabled: () => !dragClipPath || isPreparingClip,
+					getPaths: () => (dragClipPath ? [dragClipPath] : [])
+				}}
 				onmousedown={(e) => {
 					e.stopPropagation();
-					e.preventDefault();
-					if (dragClipPath) {
-						startExternalFileDrag([dragClipPath]);
-					}
 				}}
 				class="selection-rect"
 				class:ready={!!dragClipPath}
