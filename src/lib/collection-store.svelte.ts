@@ -127,16 +127,14 @@ class CollectionStore {
             // Listen for waveform started
             listen('waveform-started', (event) => {
                 const id = event.payload as string;
-                this.currentlyProcessingIds.add(id);
-                this.currentlyProcessingIds = new Set(this.currentlyProcessingIds);
-                
-                // Clear old progress data when starting fresh
+                // Normalization uses a synthetic id; only track real work units.
+                if (!id.endsWith('-normalizing')) {
+                    this.currentlyProcessingIds.add(id);
+                    this.currentlyProcessingIds = new Set(this.currentlyProcessingIds);
+                }
+
                 delete this.waveformProgress[id];
                 delete this.partialWaveforms[id];
-
-                if (id.endsWith('-converting')) {
-                    this.updateConversionTaskProgress();
-                }
             });
 
             // Listen for waveform progress
@@ -153,11 +151,6 @@ class CollectionStore {
                     }
                 }
 
-                if (payload.id.endsWith('-converting')) {
-                    this.updateConversionTaskProgress();
-                } else {
-                    this.updateWaveformTaskProgress();
-                }
             });
 
             // Listen for waveform generation
@@ -170,9 +163,13 @@ class CollectionStore {
                     const task = this.tasks.find(t => t.id === 'conversions');
                     if (task && task.completed !== undefined) {
                         task.completed++;
-                        this.updateConversionTaskProgress();
+                        this.currentlyProcessingIds.delete(id);
+                        this.currentlyProcessingIds = new Set(this.currentlyProcessingIds);
+                        delete this.waveformProgress[id];
                         if (task.completed >= (task.total || 0)) {
-                            this.updateTask(task.id, { status: 'completed' });
+                            this.updateTask(task.id, { status: 'completed', progress: 100 });
+                        } else {
+                            this.syncBatchTask('conversions');
                         }
                     }
 
@@ -194,9 +191,11 @@ class CollectionStore {
                     const task = this.tasks.find(t => t.id === 'waveforms');
                     if (task && task.total !== undefined && task.completed !== undefined) {
                         task.completed++;
-                        this.updateWaveformTaskProgress();
+                        delete this.waveformProgress[id];
                         if (task.completed >= task.total) {
-                            this.updateTask(task.id, { status: 'completed', eta: undefined });
+                            this.updateTask(task.id, { status: 'completed', progress: 100, eta: undefined });
+                        } else {
+                            this.syncBatchTask('waveforms');
                         }
                     }
                 }
@@ -206,29 +205,53 @@ class CollectionStore {
 
     private static readonly ETA_WINDOW_MS = 20_000;
 
-    private computeEtaMessage(task: Task, accurateCompleted: number): string {
-        if (task.total === undefined || accurateCompleted <= 0) return '';
+    /** Batch task percent: finished count over total (matches the X / Y message). */
+    private batchTaskPercent(task: Task): number {
+        if (task.status === 'completed') return 100;
+        if (task.total === undefined || task.completed === undefined) return task.progress;
+        if (task.total === 0) return 100;
+        return Math.min(100, (task.completed / task.total) * 100);
+    }
+
+    private syncBatchTask(taskId: 'waveforms' | 'conversions'): void {
+        const task = this.tasks.find((t) => t.id === taskId);
+        if (!task || task.total === undefined || task.completed === undefined) return;
+
+        task.progress = this.batchTaskPercent(task);
+
+        const etaMessage =
+            task.status !== 'paused' ? this.computeEtaMessage(task) : '';
+        task.eta = etaMessage || undefined;
+
+        if (taskId === 'waveforms') {
+            task.message = `${task.completed} / ${task.total} waveforms${etaMessage}`;
+        } else {
+            task.message = `Standardizing ${task.completed} / ${task.total} files${etaMessage}`;
+        }
+    }
+
+    private computeEtaMessage(task: Task): string {
+        if (task.total === undefined || task.completed === undefined || task.completed <= 0) return '';
+        const unitsDone = task.completed;
         const now = Date.now();
 
         if (!task.progressHistory) task.progressHistory = [];
-        task.progressHistory.push({ time: now, completed: accurateCompleted });
+        task.progressHistory.push({ time: now, completed: unitsDone });
 
-        // Drop samples older than the window
         const cutoff = now - CollectionStore.ETA_WINDOW_MS;
         while (task.progressHistory.length > 1 && task.progressHistory[0].time < cutoff) {
             task.progressHistory.shift();
         }
 
-        // Need at least two samples to measure rate
         const oldest = task.progressHistory[0];
         const newest = task.progressHistory[task.progressHistory.length - 1];
         const windowMs = newest.time - oldest.time;
         if (windowMs < 500) return '';
 
-        const rate = (newest.completed - oldest.completed) / (windowMs / 1000); // items/sec
+        const rate = (newest.completed - oldest.completed) / (windowMs / 1000);
         if (!isFinite(rate) || rate <= 0) return '';
 
-        const remainingSeconds = (task.total - accurateCompleted) / rate;
+        const remainingSeconds = (task.total - unitsDone) / rate;
         if (!isFinite(remainingSeconds) || remainingSeconds <= 0) return '';
 
         if (remainingSeconds < 60) {
@@ -237,36 +260,6 @@ class CollectionStore {
         const mins = Math.floor(remainingSeconds / 60);
         const secs = Math.round(remainingSeconds % 60);
         return ` - ${mins}m ${secs}s remaining`;
-    }
-
-    private updateWaveformTaskProgress() {
-        const task = this.tasks.find(t => t.id === 'waveforms');
-        if (!task || task.total === undefined || task.completed === undefined) return;
-
-        const currentFilesProgress = Object.entries(this.waveformProgress)
-            .filter(([id]) => !id.endsWith('-converting'))
-            .reduce((acc, [_, p]) => acc + p, 0);
-
-        const accurateCompleted = Math.min(task.completed + currentFilesProgress, task.total);
-        task.progress = (accurateCompleted / task.total) * 100;
-        const etaMessage = task.status !== 'paused' ? this.computeEtaMessage(task, accurateCompleted) : '';
-        task.eta = etaMessage || undefined;
-        task.message = `${task.completed} / ${task.total} waveforms${etaMessage}`;
-    }
-
-    private updateConversionTaskProgress() {
-        const task = this.tasks.find(t => t.id === 'conversions');
-        if (!task || task.total === undefined || task.completed === undefined) return;
-
-        const currentFilesProgress = Object.entries(this.waveformProgress)
-            .filter(([id]) => id.endsWith('-converting'))
-            .reduce((acc, [_, p]) => acc + p, 0);
-
-        const accurateCompleted = Math.min(task.completed + currentFilesProgress, task.total);
-        task.progress = (accurateCompleted / task.total) * 100;
-        const etaMessage = task.status !== 'paused' ? this.computeEtaMessage(task, accurateCompleted) : '';
-        task.eta = etaMessage || undefined;
-        task.message = `Standardizing ${task.completed} / ${task.total} files${etaMessage}`;
     }
 
     private handleCollectionResult(result: { files: Omit<FileItem, 'selected'>[], waveform_ids: string[], conversion_ids: string[] }) {
@@ -284,7 +277,7 @@ class CollectionStore {
             if (task) {
                 task.total = (task.total || 0) + result.conversion_ids.length;
                 task.status = 'running';
-                this.updateConversionTaskProgress();
+                this.syncBatchTask('conversions');
             } else {
                 this.addTask({
                     id: 'conversions',
@@ -305,7 +298,7 @@ class CollectionStore {
                 task.total = (task.total || 0) + totalWaveformsNeeded;
                 task.status = 'running';
                 if (!task.startTime) task.startTime = Date.now();
-                this.updateWaveformTaskProgress();
+                this.syncBatchTask('waveforms');
             } else {
                 this.addTask({
                     id: 'waveforms',
@@ -333,8 +326,10 @@ class CollectionStore {
         if (task) {
             const statusChanged = updates.status && updates.status !== task.status;
             Object.assign(task, updates);
-            if (task.total !== undefined && task.completed !== undefined) {
-                task.progress = (task.completed / task.total) * 100;
+            if (task.id === 'waveforms' || task.id === 'conversions') {
+                this.syncBatchTask(task.id);
+            } else if (updates.progress === undefined && task.total !== undefined && task.completed !== undefined) {
+                task.progress = this.batchTaskPercent(task);
             }
             if (statusChanged && (task.status === 'completed' || task.status === 'failed')) {
                 setTimeout(() => this.removeTask(id), 5000);
