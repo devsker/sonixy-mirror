@@ -5,7 +5,7 @@
 	import { fade } from 'svelte/transition';
 	import { audioPlayer } from '$lib/audio-player.svelte';
 	import { collectionStore } from '$lib/collection-store.svelte';
-	import { startDrag } from '@crabnebula/tauri-plugin-drag';
+	import { startExternalFileDrag } from '$lib/file-drag';
 
 	interface Props {
 		height?: number | string;
@@ -191,21 +191,6 @@
 		currentPos = null;
 	}
 
-	function handleDragStart(e: DragEvent) {
-		if (!dragClipPath) {
-			e.preventDefault();
-			return;
-		}
-		collectionStore.isDraggingFromApp = true;
-		const fileUrl = `file://${dragClipPath}`;
-		startDrag({
-			item: [fileUrl],
-			image: 'icon.png'
-		}).finally(() => {
-			collectionStore.isDraggingFromApp = false;
-		});
-	}
-
 	function getBarHeight(val: number) {
 		const minHeight = 2;
 		if (!val || isNaN(val) || val <= 0) return minHeight;
@@ -319,14 +304,7 @@
 					e.stopPropagation();
 					e.preventDefault();
 					if (dragClipPath) {
-						collectionStore.isDraggingFromApp = true;
-						const fileUrl = `file://${dragClipPath}`;
-						startDrag({
-							item: [fileUrl],
-							image: 'icon.png'
-						}).finally(() => {
-							collectionStore.isDraggingFromApp = false;
-						});
+						startExternalFileDrag([dragClipPath]);
 					}
 				}}
 				class="selection-rect"

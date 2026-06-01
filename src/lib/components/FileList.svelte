@@ -3,8 +3,7 @@
 	import { ChevronUp, ChevronDown, Filter, FolderOpen, Loader2, AlertTriangle, Trash2, Search, Circle, Tag, Plus, X } from 'lucide-svelte';
 	import { showContextMenu } from '$lib/context-menu.svelte';
 	import { revealItemInDir } from '@tauri-apps/plugin-opener';
-	import { resolveResource } from '@tauri-apps/api/path';
-	import { startDrag } from '@crabnebula/tauri-plugin-drag';
+	import { startExternalFileDrag } from '$lib/file-drag';
 	import { collectionStore, type FileItem } from '$lib/collection-store.svelte';
 	import { audioPlayer } from '$lib/audio-player.svelte';
 
@@ -221,15 +220,7 @@
 		if (pathsToDrag.length > 0 && event.dataTransfer) {
 			event.dataTransfer.effectAllowed = 'copy';
 			event.dataTransfer.setData('text/plain', pathsToDrag.join('\n'));
-			collectionStore.isDraggingFromApp = true;
-			// Convert paths to file URLs for proper macOS support
-			const fileUrls = pathsToDrag.map(p => `file://${p}`);
-			startDrag({
-				item: fileUrls,
-				image: 'icon.png'
-			}).finally(() => {
-				collectionStore.isDraggingFromApp = false;
-			});
+			startExternalFileDrag(pathsToDrag);
 		}
 	}
 
