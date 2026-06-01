@@ -2,7 +2,6 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 	import { onMount } from 'svelte';
-	import { fade } from 'svelte/transition';
 	import { audioPlayer } from '$lib/audio-player.svelte';
 	import { collectionStore } from '$lib/collection-store.svelte';
 	import { startExternalFileDrag } from '$lib/file-drag';
@@ -56,10 +55,10 @@
 
 	$effect(() => {
 		isLoading = true;
-		// Reset selection when ID changes
 		selectionStart = null;
 		selectionEnd = null;
 		dragClipPath = null;
+		audioPlayer.clearAbLoop();
 		fetchWaveform();
 	});
 
@@ -126,11 +125,24 @@
 		return null;
 	});
 
+	function applySelectionAbLoop(start: number, end: number) {
+		audioPlayer.setAbLoop(start, end);
+		const file = collectionStore.files.find((f) => f.id === id);
+		if (!file || file.missing) return;
+
+		if (audioPlayer.currentFileId !== id) {
+			audioPlayer.play(file);
+		} else {
+			audioPlayer.seek(start);
+		}
+	}
+
 	function onMouseDown(e: MouseEvent) {
 		if (e.button !== 0 || isLocked) return;
 		// Don't start a new selection if clicking on the existing one to drag it
 		if ((e.target as Element).closest('.selection-rect')) return;
 
+		audioPlayer.clearAbLoop();
 		dragStartPos = e.clientX;
 		currentPos = e.clientX;
 		isDragging = true;
@@ -161,18 +173,18 @@
 		const getPct = (x: number) => Math.max(0, Math.min(1, (x - rect.left) / rect.width));
 
 		if (diff < 5) {
-			// Small movement is a seek
 			if (audioPlayer.currentFileId === id) {
 				audioPlayer.seek(getPct(e.clientX));
 			}
 		} else {
-			// Selection finalized
 			const p1 = getPct(dragStartPos!);
 			const p2 = getPct(e.clientX);
 			selectionStart = Math.min(p1, p2);
 			selectionEnd = Math.max(p1, p2);
 
 			if (selectionEnd - selectionStart > 0.001) {
+				applySelectionAbLoop(selectionStart, selectionEnd);
+
 				isPreparingClip = true;
 				try {
 					dragClipPath = await invoke<string>('prepare_drag_clip', {

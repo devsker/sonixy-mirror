@@ -1,12 +1,26 @@
 <script lang="ts">
     import { Minus, Square, X, RefreshCw, Play, Volume2, FolderOpen, GripVertical, SkipBack, SkipForward } from 'lucide-svelte';
     import { type Settings } from '$lib/settings-store.svelte';
+    import {
+        TITLEBAR_WINDOW_CONTROLS_ID,
+        resolveTitlebarStyle,
+        usesLinuxWindowControls,
+        usesMacTrafficLights,
+        windowControlsPinLeft
+    } from '$lib/platform';
+    import MacTrafficLights from '$lib/components/MacTrafficLights.svelte';
+    import LinuxWindowControls from '$lib/components/LinuxWindowControls.svelte';
 
     interface Props {
         settings: Settings;
     }
 
     let { settings }: Props = $props();
+
+    const titlebarStyle = $derived(resolveTitlebarStyle(settings.titlebarStyle));
+    const showMacTrafficLights = $derived(usesMacTrafficLights(titlebarStyle));
+    const showLinuxWindowControls = $derived(usesLinuxWindowControls(titlebarStyle));
+    const pinWindowControlsLeft = $derived(windowControlsPinLeft(titlebarStyle));
 
     const ALL_ELEMENTS = [
         { id: 'title', label: 'App Title', icon: null },
@@ -15,26 +29,22 @@
         { id: 'volume', label: 'Volume Slider', icon: Volume2 },
         { id: 'tasks', label: 'Background Tasks', icon: null },
         { id: 'refresh', label: 'Refresh Button', icon: RefreshCw },
-        { id: 'window-controls', label: 'Window Controls', icon: Minus },
         { id: 'spacer', label: 'Flexible Spacer', icon: GripVertical }
     ];
 
     let sections = $derived.by(() => {
         const result = {
-            left: [] as { id: string, index: number }[],
-            center: [] as { id: string, index: number }[],
-            right: [] as { id: string, index: number }[]
+            left: [] as { id: string; index: number }[],
+            center: [] as { id: string; index: number }[],
+            right: [] as { id: string; index: number }[]
         };
         let currentSection: 'left' | 'center' | 'right' = 'left';
 
         settings.titlebarLayout.forEach((id, index) => {
-            if (id === 'section:left') {
-                currentSection = 'left';
-            } else if (id === 'section:center') {
-                currentSection = 'center';
-            } else if (id === 'section:right') {
-                currentSection = 'right';
-            } else {
+            if (id === 'section:left') currentSection = 'left';
+            else if (id === 'section:center') currentSection = 'center';
+            else if (id === 'section:right') currentSection = 'right';
+            else if (id !== TITLEBAR_WINDOW_CONTROLS_ID) {
                 result[currentSection].push({ id, index });
             }
         });
@@ -134,6 +144,32 @@
 
 <div class="visualizer" role="presentation" ondragend={resetDragState}>
     <div class="titlebar mock">
+        {#if pinWindowControlsLeft}
+            <div class="titlebar-pinned titlebar-pinned-left">
+                <div
+                    class="window-controls"
+                    class:macos={showMacTrafficLights}
+                    class:linux={showLinuxWindowControls}
+                >
+                    {#if showMacTrafficLights}
+                        <MacTrafficLights preview />
+                    {:else if showLinuxWindowControls}
+                        <LinuxWindowControls preview />
+                    {:else}
+                        <button class="control-btn" aria-label="Minimize">
+                            <Minus size={14} />
+                        </button>
+                        <button class="control-btn" aria-label="Maximize">
+                            <Square size={12} />
+                        </button>
+                        <button class="control-btn close-btn" aria-label="Close">
+                            <X size={14} />
+                        </button>
+                    {/if}
+                </div>
+            </div>
+        {/if}
+
         {#each ['left', 'center', 'right'] as section}
             {@const sectionData = sections[section as keyof typeof sections]}
             <div
@@ -200,18 +236,6 @@
                             <button class="control-btn draggable-element" aria-label="Refresh">
                                 <RefreshCw size={14} />
                             </button>
-                        {:else if item.id === 'window-controls'}
-                            <div class="window-controls draggable-element">
-                                <button class="control-btn" aria-label="Minimize">
-                                    <Minus size={14} />
-                                </button>
-                                <button class="control-btn" aria-label="Maximize">
-                                    <Square size={12} />
-                                </button>
-                                <button class="control-btn close-btn" aria-label="Close">
-                                    <X size={14} />
-                                </button>
-                            </div>
                         {:else if item.id === 'spacer'}
                             <div class="spacer draggable-element">
                                 <div class="spacer-handle"><GripVertical size={10} /></div>
@@ -228,6 +252,32 @@
                 {/if}
             </div>
         {/each}
+
+        {#if !pinWindowControlsLeft}
+            <div class="titlebar-pinned titlebar-pinned-right">
+                <div
+                    class="window-controls"
+                    class:macos={showMacTrafficLights}
+                    class:linux={showLinuxWindowControls}
+                >
+                    {#if showMacTrafficLights}
+                        <MacTrafficLights preview />
+                    {:else if showLinuxWindowControls}
+                        <LinuxWindowControls preview />
+                    {:else}
+                        <button class="control-btn" aria-label="Minimize">
+                            <Minus size={14} />
+                        </button>
+                        <button class="control-btn" aria-label="Maximize">
+                            <Square size={12} />
+                        </button>
+                        <button class="control-btn close-btn" aria-label="Close">
+                            <X size={14} />
+                        </button>
+                    {/if}
+                </div>
+            </div>
+        {/if}
     </div>
 
     <div class="pool-container">
@@ -422,6 +472,23 @@
     }
 
     .window-controls {
+        display: flex;
+        height: 100%;
+    }
+
+    .titlebar-pinned {
+        display: flex;
+        align-items: center;
+        height: 100%;
+        flex-shrink: 0;
+    }
+
+    .titlebar-pinned-right {
+        margin-left: auto;
+    }
+
+    .window-controls.macos,
+    .window-controls.linux {
         display: flex;
         height: 100%;
     }

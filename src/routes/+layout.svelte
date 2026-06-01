@@ -1,7 +1,6 @@
 <script lang="ts">
-	import { Library, Settings } from 'lucide-svelte';
-	import { page } from '$app/state';
 	import Titlebar from '$lib/components/Titlebar.svelte';
+	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { onMount, setContext } from 'svelte';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import DropPrompt from '$lib/components/DropPrompt.svelte';
@@ -13,16 +12,35 @@
 	
 	let { children } = $props();
 
+	function isTypingTarget(target: EventTarget | null) {
+		if (!(target instanceof HTMLElement)) return false;
+		return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+	}
+
 	function handleKeydown(e: KeyboardEvent) {
-		if (e.code === 'Space') {
-			// Don't toggle if we're in an input or textarea
-			const target = e.target as HTMLElement;
-			if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
-				return;
-			}
-			
-			e.preventDefault();
-			audioPlayer.toggle();
+		if (isTypingTarget(e.target)) return;
+
+		switch (e.code) {
+			case 'Space':
+				e.preventDefault();
+				audioPlayer.toggle();
+				break;
+			case 'ArrowLeft':
+				e.preventDefault();
+				audioPlayer.previous();
+				break;
+			case 'ArrowRight':
+				e.preventDefault();
+				audioPlayer.next();
+				break;
+			case 'KeyM':
+				e.preventDefault();
+				audioPlayer.toggleMute();
+				break;
+			case 'Escape':
+				if (showDropPrompt || collectionStore.pendingRelocate) return;
+				audioPlayer.stop();
+				break;
 		}
 	}
 
@@ -122,31 +140,7 @@
 <div class="app-container">
 	<Titlebar />
 	<div class="app-layout">
-		<aside class="sidebar">
-			<div class="top-icons">
-				<a 
-					href="/"
-					class="icon-btn" 
-					class:active={page.url.pathname === '/'} 
-					title="Collections"
-					draggable="false"
-				>
-					<Library size={24} strokeWidth={2} />
-				</a>
-			</div>
-
-			<div class="bottom-icons">
-				<a 
-					href="/settings"
-					class="icon-btn" 
-					class:active={page.url.pathname === '/settings'} 
-					title="Settings"
-					draggable="false"
-				>
-					<Settings size={24} strokeWidth={2} />
-				</a>
-			</div>
-		</aside>
+		<Sidebar />
 
 		<main class="content">
 			{@render children()}
@@ -248,7 +242,6 @@
 	/* Transition management */
 	:global(html:not(.no-transitions) body),
 	:global(html:not(.no-transitions) .sidebar),
-	:global(html:not(.no-transitions) .icon-btn),
 	:global(html:not(.no-transitions) .content),
 	:global(html:not(.no-transitions) .titlebar) {
 		transition: background-color 0.2s, color 0.2s, border-color 0.2s;
@@ -267,59 +260,6 @@
 		display: flex;
 		flex: 1;
 		min-height: 0;
-	}
-
-	.sidebar {
-		width: 48px;
-		background-color: var(--sidebar-bg);
-		display: flex;
-		flex-direction: column;
-		justify-content: space-between;
-		align-items: center;
-		padding: 12px 0;
-		border-right: 1px solid var(--border-color);
-		flex-shrink: 0;
-	}
-
-	.top-icons,
-	.bottom-icons {
-		display: flex;
-		flex-direction: column;
-		gap: 12px;
-		width: 100%;
-		align-items: center;
-	}
-
-	.icon-btn {
-		background: none;
-		border: none;
-		color: var(--icon-color);
-		cursor: pointer;
-		padding: 12px 0;
-		width: 100%;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		position: relative;
-		text-decoration: none;
-	}
-
-	.icon-btn:hover {
-		color: var(--icon-hover);
-	}
-
-	.icon-btn.active {
-		color: var(--icon-active);
-	}
-
-	.icon-btn.active::before {
-		content: '';
-		position: absolute;
-		left: 0;
-		top: 10%;
-		height: 80%;
-		width: 2px;
-		background-color: var(--icon-active);
 	}
 
 	.content {

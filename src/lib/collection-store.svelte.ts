@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { remove } from '@tauri-apps/plugin-fs';
 import { audioPlayer } from './audio-player.svelte';
 import { settingsStore } from './settings-store.svelte';
+import { collectionPathsEqual } from './collection-path';
 
 export interface FileItem {
     id: string;
@@ -34,10 +35,18 @@ export interface Task {
     pauseStartTime?: number;
 }
 
+const SWITCH_UI_DELAY_MS = 300;
+
 class CollectionStore {
     files = $state<FileItem[]>([]);
     collectionPath = $state<string | null>(null);
     loading = $state(false);
+    /** True while a collection switch is in progress (blocks duplicate switches). */
+    switchingCollection = $state(false);
+    /** True only after switch exceeds SWITCH_UI_DELAY_MS (drives loading overlays). */
+    showSwitchingUi = $state(false);
+    switchingToPath = $state<string | null>(null);
+    private switchingUiTimer: ReturnType<typeof setTimeout> | null = null;
     pendingRelocate = $state<{id: string, path: string} | null>(null);
     tasks = $state<Task[]>([]);
     processingPaused = $state(false);
@@ -47,26 +56,23 @@ class CollectionStore {
     partialWaveforms = $state<Record<string, number[]>>({});
     isDraggingFromApp = $state(false);
 
-    // Filter & Sort State
-    sortColumn = $state<string | null>(null);
-    sortDirection = $state<'asc' | 'desc'>('asc');
-    selectedFormats = $state<string[]>([]);
-    selectedTags = $state<string[]>([]);
-
     displayedFiles = $derived.by(() => {
         let result = [...this.files];
 
-        // Apply Filters
-        if (this.selectedFormats.length > 0) {
-            result = result.filter((f) => this.selectedFormats.includes(f.format));
-        }
-        if (this.selectedTags.length > 0) {
-            result = result.filter((f) => f.tags.some((t) => this.selectedTags.includes(t)));
+        const query = settingsStore.filenameQuery.trim().toLowerCase();
+        if (query) {
+            result = result.filter((f) => f.filename.toLowerCase().includes(query));
         }
 
-        // Apply Sorting
-        const col = this.sortColumn;
-        const dir = this.sortDirection;
+        if (settingsStore.selectedFormats.length > 0) {
+            result = result.filter((f) => settingsStore.selectedFormats.includes(f.format));
+        }
+        if (settingsStore.selectedTags.length > 0) {
+            result = result.filter((f) => f.tags.some((t) => settingsStore.selectedTags.includes(t)));
+        }
+
+        const col = settingsStore.sortColumn;
+        const dir = settingsStore.sortDirection;
 
         if (col) {
             result.sort((a, b) => {
@@ -173,8 +179,7 @@ class CollectionStore {
                         }
                     }
 
-                    // Refresh file list to see the new MP3
-                    this.refresh();
+                    this.reloadFiles();
                 } else {
                     // Update file gain in store
                     const file = this.files.find(f => f.id === id);
@@ -345,9 +350,51 @@ class CollectionStore {
         return this.processingFiles.has(id);
     }
 
-    async openCollectionByPath(path: string) {
+    private beginSwitchingUi(path: string) {
+        this.endSwitchingUiTimer();
+        this.switchingCollection = true;
+        this.showSwitchingUi = false;
+        this.switchingToPath = path;
+        this.switchingUiTimer = setTimeout(() => {
+            if (!this.switchingCollection) return;
+            this.showSwitchingUi = true;
+            this.files = [];
+        }, SWITCH_UI_DELAY_MS);
+    }
+
+    private endSwitchingUiTimer() {
+        if (this.switchingUiTimer) {
+            clearTimeout(this.switchingUiTimer);
+            this.switchingUiTimer = null;
+        }
+    }
+
+    private endSwitchingUi() {
+        this.endSwitchingUiTimer();
+        this.switchingCollection = false;
+        this.showSwitchingUi = false;
+        this.switchingToPath = null;
+    }
+
+    async openCollectionByPath(path: string, options?: { force?: boolean }) {
+        if (this.switchingCollection) {
+            if (!options?.force) return;
+            this.endSwitchingUi();
+        }
+        if (
+            !options?.force &&
+            collectionPathsEqual(this.collectionPath, path) &&
+            this.files.length > 0
+        ) {
+            return;
+        }
+
+        const previousPath = this.collectionPath;
+        settingsStore.stashCollectionUi(previousPath);
+
         try {
             audioPlayer.stop();
+            this.beginSwitchingUi(path);
             this.loading = true;
             this.collectionPath = path;
             this.processingFiles = new Set();
@@ -356,14 +403,37 @@ class CollectionStore {
             this.currentlyProcessingIds = new Set();
             this.waveformProgress = {};
             this.partialWaveforms = {};
-            const result = await invoke<{ files: Omit<FileItem, 'selected'>[], waveform_ids: string[], conversion_ids: string[] }>('open_collection', { path });
+            this.pendingRelocate = null;
+
+            const result = await invoke<{
+                files: Omit<FileItem, 'selected'>[];
+                waveform_ids: string[];
+                conversion_ids: string[];
+            }>('switch_collection', { path });
+
             this.handleCollectionResult(result);
+            settingsStore.applyCollectionUi(path);
             localStorage.setItem('lastCollectionPath', path);
+            settingsStore.addRecentCollection(path);
         } catch (e) {
-            console.error('Failed to auto-open collection', e);
-            this.collectionPath = null;
-            localStorage.removeItem('lastCollectionPath');
+            console.error('Failed to open collection', e);
+            if (previousPath && !collectionPathsEqual(previousPath, path)) {
+                this.collectionPath = previousPath;
+                try {
+                    await this.reloadFiles();
+                    settingsStore.applyCollectionUi(previousPath);
+                } catch {
+                    this.collectionPath = null;
+                    this.files = [];
+                    localStorage.removeItem('lastCollectionPath');
+                }
+            } else {
+                this.collectionPath = null;
+                this.files = [];
+                localStorage.removeItem('lastCollectionPath');
+            }
         } finally {
+            this.endSwitchingUi();
             this.loading = false;
         }
     }
@@ -377,19 +447,30 @@ class CollectionStore {
             });
 
             if (selected) {
-                await this.openCollectionByPath(selected as string);
+                await this.openCollectionByPath(selected as string, { force: true });
             }
         } catch (e) {
             console.error('Failed to open collection', e);
         }
     }
 
+    async reloadFiles() {
+        if (!this.collectionPath) return;
+        const selectedIds = new Set(this.files.filter((f) => f.selected).map((f) => f.id));
+        const result = await invoke<Omit<FileItem, 'selected'>[]>('get_collection_files');
+        this.files = result.map((f) => ({ ...f, selected: selectedIds.has(f.id) }));
+    }
+
     async refresh() {
         if (!this.collectionPath) return;
         try {
             this.loading = true;
-            const result = await invoke<Omit<FileItem, 'selected'>[]>('get_collection_files');
-            this.files = result.map(f => ({ ...f, selected: false }));
+            const selectedIds = new Set(this.files.filter((f) => f.selected).map((f) => f.id));
+            const result = await invoke<{ files: Omit<FileItem, 'selected'>[], waveform_ids: string[], conversion_ids: string[] }>('rescan_collection');
+            this.handleCollectionResult(result);
+            for (const file of this.files) {
+                file.selected = selectedIds.has(file.id);
+            }
         } catch (e) {
             console.error('Failed to refresh collection', e);
         } finally {
@@ -639,7 +720,6 @@ class CollectionStore {
             const updatedItem = await invoke<Omit<FileItem, 'selected'>>('update_file_tags', { id, tags });
             const index = this.files.findIndex(f => f.id === id);
             if (index !== -1) {
-                // Keep the selection state
                 const selected = this.files[index].selected;
                 this.files[index] = { ...updatedItem, selected };
             }
@@ -648,6 +728,29 @@ class CollectionStore {
             throw e;
         }
     }
+
+    async batchAddTag(ids: string[], tag: string) {
+        const trimmed = tag.trim();
+        if (!trimmed) return;
+        for (const id of ids) {
+            const file = this.files.find((f) => f.id === id);
+            if (!file || file.missing || this.isLocked(id)) continue;
+            if (!file.tags.includes(trimmed)) {
+                await this.updateTags(id, [...file.tags, trimmed]);
+            }
+        }
+    }
+
+    async batchRemoveTag(ids: string[], tag: string) {
+        for (const id of ids) {
+            const file = this.files.find((f) => f.id === id);
+            if (!file || file.missing || this.isLocked(id)) continue;
+            if (file.tags.includes(tag)) {
+                await this.updateTags(id, file.tags.filter((t) => t !== tag));
+            }
+        }
+    }
+
 }
 
 export const collectionStore = new CollectionStore();

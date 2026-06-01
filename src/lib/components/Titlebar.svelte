@@ -21,10 +21,26 @@
 	import { collectionStore } from '$lib/collection-store.svelte';
 	import { audioPlayer } from '$lib/audio-player.svelte';
 	import { settingsStore } from '$lib/settings-store.svelte';
+	import { collectionDisplayName } from '$lib/collection-path';
+	import {
+		parseTitlebarLayout,
+		resolveTitlebarStyle,
+		usesLinuxWindowControls,
+		usesMacTrafficLights,
+		windowControlsPinLeft
+	} from '$lib/platform';
+	import MacTrafficLights from '$lib/components/MacTrafficLights.svelte';
+	import LinuxWindowControls from '$lib/components/LinuxWindowControls.svelte';
 
 	const appWindow = getCurrentWindow();
+	const titlebarStyle = $derived(resolveTitlebarStyle(settingsStore.titlebarStyle));
+	const showMacTrafficLights = $derived(usesMacTrafficLights(titlebarStyle));
+	const showLinuxWindowControls = $derived(usesLinuxWindowControls(titlebarStyle));
+	const pinWindowControlsLeft = $derived(windowControlsPinLeft(titlebarStyle));
 	let loading = $derived(collectionStore.loading);
 	let collectionPath = $derived(collectionStore.collectionPath);
+	let collectionName = $derived(collectionDisplayName(collectionPath));
+	let showSwitchingUi = $derived(collectionStore.showSwitchingUi);
 	let tasks = $derived(collectionStore.tasks);
 	let showTasks = $state(false);
 
@@ -48,27 +64,7 @@
 	let volume = $derived(audioPlayer.volume);
 	let currentFileId = $derived(audioPlayer.currentFileId);
 
-	let sections = $derived.by(() => {
-		const result = {
-			left: [] as string[],
-			center: [] as string[],
-			right: [] as string[]
-		};
-		let currentSection: 'left' | 'center' | 'right' = 'left';
-
-		for (const id of settingsStore.titlebarLayout) {
-			if (id === 'section:left') {
-				currentSection = 'left';
-			} else if (id === 'section:center') {
-				currentSection = 'center';
-			} else if (id === 'section:right') {
-				currentSection = 'right';
-			} else {
-				result[currentSection].push(id);
-			}
-		}
-		return result;
-	});
+	let sections = $derived(parseTitlebarLayout(settingsStore.titlebarLayout));
 
 	async function minimize() {
 		await appWindow.minimize();
@@ -110,8 +106,14 @@
 
 {#snippet renderElement(id: string)}
 	{#if id === 'title'}
-		<div data-tauri-drag-region class="title-container">
-			<span class="title">Sonixy</span>
+		<div data-tauri-drag-region class="title-container" title={collectionPath ?? undefined}>
+			<span class="title" class:has-collection={!!collectionPath}>
+				{#if collectionPath}
+					<span class="collection-name" class:loading={showSwitchingUi}>{collectionName}</span>
+				{:else}
+					Sonixy
+				{/if}
+			</span>
 		</div>
 	{:else if id === 'folder'}
 		<button
@@ -335,8 +337,22 @@
 		>
 			<RefreshCw size={14} class={loading ? 'animate-spin' : ''} />
 		</button>
-	{:else if id === 'window-controls'}
-		<div class="window-controls">
+	{:else if id === 'spacer'}
+		<div data-tauri-drag-region class="spacer"></div>
+	{/if}
+{/snippet}
+
+{#snippet windowControls()}
+	<div
+		class="window-controls"
+		class:macos={showMacTrafficLights}
+		class:linux={showLinuxWindowControls}
+	>
+		{#if showMacTrafficLights}
+			<MacTrafficLights onClose={close} onMinimize={minimize} onZoom={toggleMaximize} />
+		{:else if showLinuxWindowControls}
+			<LinuxWindowControls onClose={close} onMinimize={minimize} onZoom={toggleMaximize} />
+		{:else}
 			<button class="control-btn" onclick={minimize} aria-label="Minimize">
 				<Minus size={14} />
 			</button>
@@ -346,13 +362,17 @@
 			<button class="control-btn close-btn" onclick={close} aria-label="Close">
 				<X size={14} />
 			</button>
-		</div>
-	{:else if id === 'spacer'}
-		<div data-tauri-drag-region class="spacer"></div>
-	{/if}
+		{/if}
+	</div>
 {/snippet}
 
 <div data-tauri-drag-region class="titlebar">
+	{#if pinWindowControlsLeft}
+		<div class="titlebar-pinned titlebar-pinned-left">
+			{@render windowControls()}
+		</div>
+	{/if}
+
 	<div data-tauri-drag-region class="titlebar-section titlebar-left">
 		{#each sections.left as id}
 			{@render renderElement(id)}
@@ -370,6 +390,12 @@
 			{@render renderElement(id)}
 		{/each}
 	</div>
+
+	{#if !pinWindowControlsLeft}
+		<div class="titlebar-pinned titlebar-pinned-right">
+			{@render windowControls()}
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -434,6 +460,21 @@
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+		max-width: 220px;
+	}
+
+	.title.has-collection {
+		text-transform: none;
+		letter-spacing: normal;
+	}
+
+	.collection-name {
+		color: var(--text-color);
+		font-weight: 600;
+	}
+
+	.collection-name.loading {
+		color: var(--text-muted);
 	}
 
 	.folder-btn {
@@ -546,6 +587,24 @@
 	.window-controls {
 		display: flex;
 		height: 100%;
+	}
+
+	.titlebar-pinned {
+		display: flex;
+		align-items: center;
+		height: 100%;
+		flex-shrink: 0;
+	}
+
+	.titlebar-pinned-right {
+		margin-left: auto;
+	}
+
+	.window-controls.macos,
+	.window-controls.linux {
+		display: flex;
+		height: 100%;
+		flex-shrink: 0;
 	}
 
 	.task-container {
