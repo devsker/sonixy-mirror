@@ -103,7 +103,7 @@ jobs:
           tauriScript: pnpm tauri
           tagName: >-
             ${{ (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.create_release))
-                && 'v__VERSION__' || '' }}
+                && '__VERSION__' || '' }}
           releaseName: >-
             ${{ (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.create_release))
                 && 'Sonixy v__VERSION__' || '' }}

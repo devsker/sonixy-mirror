@@ -2,11 +2,13 @@
 	import Titlebar from '$lib/components/Titlebar.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { onMount, setContext } from 'svelte';
+	import { listen } from '@tauri-apps/api/event';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import DropPrompt from '$lib/components/DropPrompt.svelte';
 	import ContextMenu from '$lib/components/ContextMenu.svelte';
 	import { collectionStore } from '$lib/collection-store.svelte';
 	import { audioPlayer } from '$lib/audio-player.svelte';
+	import { preloadDragIcon } from '$lib/file-drag';
 	
 	import { settingsStore } from '$lib/settings-store.svelte';
 	
@@ -46,10 +48,28 @@
 
 	let dropPaths = $state<string[]>([]);
 	let showDropPrompt = $state(false);
+	let ffmpegDownloadMessage = $state<string | null>(null);
+	let ffmpegDownloadProgress = $state(0);
 
 	const appWindow = getCurrentWindow();
 	
 	onMount(() => {
+		preloadDragIcon();
+
+		const unlistenFfmpeg = listen<{ progress: number; message: string }>(
+			'ffmpeg-download-progress',
+			(event) => {
+				ffmpegDownloadProgress = event.payload.progress;
+				ffmpegDownloadMessage = event.payload.message;
+				if (event.payload.progress >= 1) {
+					setTimeout(() => {
+						ffmpegDownloadMessage = null;
+						ffmpegDownloadProgress = 0;
+					}, 1500);
+				}
+			}
+		);
+
 		const unlistenPromise = appWindow.onDragDropEvent((event) => {
 			if (collectionStore.isDraggingFromApp) return;
 
@@ -71,7 +91,8 @@
 		});
 
 		return () => {
-			unlistenPromise.then(f => f());
+			unlistenFfmpeg.then((f) => f());
+			unlistenPromise.then((f) => f());
 		};
 	});
 
@@ -155,6 +176,13 @@
 	{/if}
 
 	<ContextMenu />
+
+	{#if ffmpegDownloadMessage}
+		<div class="ffmpeg-download-banner" role="status">
+			<p>{ffmpegDownloadMessage}</p>
+			<progress max="1" value={ffmpegDownloadProgress}></progress>
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -187,6 +215,32 @@
 		--scrollbar-thumb: #444444;
 		--scrollbar-thumb-hover: #555555;
 		--selection-color: #007acc;
+	}
+
+	.ffmpeg-download-banner {
+		position: fixed;
+		left: 50%;
+		bottom: 24px;
+		transform: translateX(-50%);
+		z-index: 10000;
+		min-width: 280px;
+		max-width: 90vw;
+		padding: 12px 16px;
+		border-radius: 8px;
+		background: var(--sidebar-bg);
+		border: 1px solid var(--border-color);
+		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+	}
+
+	.ffmpeg-download-banner p {
+		margin: 0 0 8px;
+		font-size: 13px;
+		color: var(--text-main);
+	}
+
+	.ffmpeg-download-banner progress {
+		width: 100%;
+		height: 6px;
 	}
 
 	:global(body) {

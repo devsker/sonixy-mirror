@@ -19,6 +19,7 @@
     },
     "core:path:default",
     "core:event:default",
+    "core:webview:allow-internal-toggle-devtools",
     "drag:default"
   ]
 }

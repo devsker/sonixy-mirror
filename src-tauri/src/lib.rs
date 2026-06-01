@@ -1,4 +1,5 @@
 mod collection;
+mod ffmpeg;
 
 use crate::collection::FileItem;
 use rayon::prelude::*;
@@ -9,7 +10,7 @@ use std::io::{Cursor, Read};
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{Emitter, Manager, State, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 
 enum TaskType {
     Waveform { normalize: bool },
@@ -669,13 +670,26 @@ fn seek_audio(time_seconds: f32, state: State<'_, AppState>) -> Result<(), Strin
     Ok(())
 }
 
+fn task_needs_ffmpeg(task: &WaveformTask) -> bool {
+    match task.task_type {
+        TaskType::Waveform { normalize: true } => true,
+        TaskType::Convert { .. } => true,
+        TaskType::Waveform { normalize: false } => false,
+    }
+}
+
 #[tauri::command]
 async fn prepare_drag_clip(
+    app: AppHandle,
     id: String,
     start_pct: f32,
     end_pct: f32,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    let app_for_ffmpeg = app.clone();
+    tauri::async_runtime::spawn_blocking(move || ffmpeg::ensure_blocking(&app_for_ffmpeg))
+        .await
+        .map_err(|e| e.to_string())??;
     let state_path = state
         .collection_path
         .lock()
@@ -756,6 +770,19 @@ async fn update_file_tags(
 }
 
 #[tauri::command]
+fn ffmpeg_is_available(app: AppHandle) -> bool {
+    ffmpeg::is_available(&app)
+}
+
+#[tauri::command]
+async fn ensure_ffmpeg(app: AppHandle) -> Result<String, String> {
+    let path = tauri::async_runtime::spawn_blocking(move || ffmpeg::ensure_blocking(&app))
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 fn pause_processing(state: State<'_, AppState>) {
     state.waveform_queue.paused.store(true, Ordering::SeqCst);
 }
@@ -800,6 +827,8 @@ pub fn run() {
         })
         .setup(move |app| {
             let handle = app.handle().clone();
+
+            ffmpeg::offer_install_on_startup(&handle);
 
             // Background thread for audio completion events
             let handle_ended = handle.clone();
@@ -860,6 +889,13 @@ pub fn run() {
                         }
 
                         let full_path = folder_path.join(&task.relative_path);
+
+                        if task_needs_ffmpeg(&task) {
+                            if let Err(err) = ffmpeg::ensure_blocking(&handle) {
+                                eprintln!("Skipping task (FFmpeg): {err}");
+                                continue;
+                            }
+                        }
 
                         match task.task_type {
                             TaskType::Waveform { normalize } => {
@@ -1001,7 +1037,9 @@ pub fn run() {
             prepare_drag_clip,
             update_file_tags,
             pause_processing,
-            resume_processing
+            resume_processing,
+            ffmpeg_is_available,
+            ensure_ffmpeg
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -5,7 +5,7 @@
 	import { collectionDisplayName } from '$lib/collection-path';
 	import { showContextMenu } from '$lib/context-menu.svelte';
 	import { revealItemInDir } from '@tauri-apps/plugin-opener';
-	import { startExternalFileDrag } from '$lib/file-drag';
+	import { externalFileDrag } from '$lib/file-drag';
 	import { collectionStore, type FileItem } from '$lib/collection-store.svelte';
 	import { audioPlayer } from '$lib/audio-player.svelte';
 
@@ -241,23 +241,20 @@
 		draggingColumn = null;
 	}
 
-	async function handleFileDragStart(event: DragEvent, file: FileItem) {
-		if (file.missing || !collectionPath) return;
-
-		const selectedFiles = files.filter(f => f.selected && !f.missing);
-		let pathsToDrag: string[] = [];
-
-		if (file.selected) {
-			pathsToDrag = selectedFiles.map(f => `${collectionPath}/${f.filepath}`.replace(/[\\\/]+/g, '/'));
-		} else {
-			pathsToDrag = [`${collectionPath}/${file.filepath}`.replace(/[\\\/]+/g, '/')];
-		}
-
-		if (pathsToDrag.length > 0 && event.dataTransfer) {
-			event.dataTransfer.effectAllowed = 'copy';
-			event.dataTransfer.setData('text/plain', pathsToDrag.join('\n'));
-			startExternalFileDrag(pathsToDrag);
-		}
+	function fileDragOptions(file: FileItem) {
+		return {
+			disabled: () => file.missing || !collectionPath,
+			getPaths: () => {
+				if (file.missing || !collectionPath) return [];
+				const selectedFiles = files.filter((f) => f.selected && !f.missing);
+				if (file.selected) {
+					return selectedFiles.map((f) =>
+						`${collectionPath}/${f.filepath}`.replace(/[\\\/]+/g, '/')
+					);
+				}
+				return [`${collectionPath}/${file.filepath}`.replace(/[\\\/]+/g, '/')];
+			}
+		};
 	}
 
 	function toggleSort(col: string) {
@@ -624,11 +621,10 @@
 					class:selected={file.selected} 
 					class:missing={file.missing}
 					class:locked={isLocked}
+					use:externalFileDrag={fileDragOptions(file)}
 					onclick={(e) => handleSelection(e, i)}
 					onkeydown={(e) => e.key === 'Enter' && handleSelection(e as unknown as MouseEvent, i)}
 					oncontextmenu={(e) => handleContextMenu(e, file)}
-					draggable="true"
-					ondragstart={(e) => handleFileDragStart(e, file)}
 					tabindex="0"
 				>
 					{#if showCheckboxes}

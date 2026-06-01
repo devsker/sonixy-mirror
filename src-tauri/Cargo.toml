@@ -1,6 +1,6 @@
 [package]
 name = "sonixy"
-version = "0.3.0"
+version = "0.3.1"
 description = "lightweight audio collection manager"
 authors = ["sker"]
 edition = "2021"
@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset"] }
+tauri = { version = "2", features = ["protocol-asset", "devtools"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
@@ -32,3 +32,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 symphonia = { version = "0.5.5", features = ["all"] }
 rodio = { version = "0.19", features = ["symphonia-all"] }
 rayon = "1.10"
+ureq = { version = "3", features = ["rustls"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+tar = "0.4"
+xz2 = "0.1"
