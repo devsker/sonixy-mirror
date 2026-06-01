@@ -1,6 +1,6 @@
 {
 	"name": "sonixy",
-	"version": "0.2.2",
+	"version": "0.3.0",
 	"description": "simple audio collection manager",
 	"type": "module",
 	"scripts": {
