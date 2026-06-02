@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getContext } from 'svelte';
+	import { getContext, tick } from 'svelte';
 	import { ChevronUp, ChevronDown, Filter, FolderOpen, FolderSearch, Loader2, AlertTriangle, Trash2, Circle, Tag, Plus, X } from 'lucide-svelte';
 	import { settingsStore } from '$lib/settings-store.svelte';
 	import { collectionDisplayName } from '$lib/collection-path';
@@ -327,6 +327,7 @@
 	// Tagging State
 	let taggingFile = $state<FileItem | null>(null);
 	let newTagValue = $state('');
+	let tagInputEl = $state<HTMLInputElement | null>(null);
 	let batchTagMode = $state<'add' | 'remove' | null>(null);
 	let batchTagIds = $state<string[]>([]);
 	let batchRemoveTagOptions = $state<string[]>([]);
@@ -340,6 +341,14 @@
 		batchRemoveTagOptions = [];
 		batchRemoveTagValue = '';
 	}
+
+	$effect(() => {
+		if (!taggingFile || !tagInputEl) return;
+		void tick().then(() => {
+			tagInputEl?.focus();
+			tagInputEl?.select();
+		});
+	});
 
 	async function handleAddTag() {
 		if (batchTagMode === 'add' && batchTagIds.length > 0) {
@@ -745,6 +754,7 @@
 												<input
 													type="text"
 													class="tag-input-inline"
+													bind:this={tagInputEl}
 													bind:value={newTagValue}
 													size="1"
 													onkeydown={(e) => {
