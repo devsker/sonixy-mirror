@@ -61,6 +61,7 @@ export function Titlebar() {
 	const collectionName = collectionDisplayName(collectionPath);
 	const showSwitchingUi = collectionStore.showSwitchingUi;
 	const tasks = collectionStore.tasks;
+	const tasksPanelRequest = collectionStore.tasksPanelRequest;
 	const processingPaused = collectionStore.processingPaused;
 
 	const activeTasks = tasks.filter(
@@ -86,6 +87,12 @@ export function Titlebar() {
 		window.addEventListener('click', closeTasks);
 		return () => window.removeEventListener('click', closeTasks);
 	}, []);
+
+	useEffect(() => {
+		if (tasksPanelRequest > 0) {
+			setShowTasks(true);
+		}
+	}, [tasksPanelRequest]);
 
 	const minimize = useCallback(async () => {
 		await appWindow.minimize();

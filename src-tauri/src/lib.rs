@@ -1,5 +1,6 @@
 mod collection;
 mod ffmpeg;
+mod library_archive;
 
 use crate::collection::FileItem;
 use rayon::prelude::*;
@@ -197,6 +198,79 @@ async fn switch_collection(
     state: State<'_, AppState>,
 ) -> Result<CollectionResult, String> {
     activate_collection(PathBuf::from(path), false, &state)
+}
+
+#[tauri::command]
+async fn delete_collection_folder(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let folder = PathBuf::from(&path);
+    if !folder.is_dir() {
+        return Err("Library folder not found".to_string());
+    }
+
+    let canonical = folder
+        .canonicalize()
+        .map_err(|e| format!("Invalid library path: {e}"))?;
+
+    if canonical.components().count() < 2 {
+        return Err("Refusing to delete this path".to_string());
+    }
+
+    {
+        let open = state
+            .collection_path
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?;
+        if let Some(open_path) = open.as_ref() {
+            let open_canonical = open_path
+                .canonicalize()
+                .unwrap_or_else(|_| open_path.clone());
+            if open_canonical == canonical {
+                return Err("Unload the library before deleting it".to_string());
+            }
+        }
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::remove_dir_all(&canonical).map_err(|e| format!("Failed to delete library: {e}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn close_collection(state: State<'_, AppState>) -> Result<(), String> {
+    {
+        let mut state_path = state
+            .collection_path
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?;
+        *state_path = None;
+    }
+
+    {
+        let mut tasks = state
+            .waveform_queue
+            .tasks
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?;
+        tasks.clear();
+    }
+
+    state.waveform_queue.paused.store(false, Ordering::SeqCst);
+    state.waveform_queue.cvar.notify_all();
+    state.waveform_queue.pause_cvar.notify_all();
+
+    let sink = state
+        .audio
+        .sink
+        .lock()
+        .map_err(|_| "State poisoned".to_string())?;
+    sink.stop();
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -466,6 +540,52 @@ async fn add_files_to_collection(
         waveform_ids,
         conversion_ids,
     })
+}
+
+#[tauri::command]
+fn export_collection_library(
+    output_path: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let collection_path = state
+        .collection_path
+        .lock()
+        .map_err(|_| "State poisoned".to_string())?
+        .clone()
+        .ok_or("No collection open")?;
+
+    {
+        let tasks = state
+            .waveform_queue
+            .tasks
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?;
+        if !tasks.is_empty() {
+            return Err("Wait for waveform or conversion tasks to finish before exporting".to_string());
+        }
+    }
+
+    let output = PathBuf::from(output_path);
+    std::thread::spawn(move || {
+        let _ = library_archive::export_collection(&collection_path, &output, &app);
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn import_collection_library(
+    archive_path: String,
+    parent_dir: String,
+    app: AppHandle,
+) -> Result<(), String> {
+    let archive = PathBuf::from(archive_path);
+    let parent = PathBuf::from(parent_dir);
+
+    std::thread::spawn(move || {
+        let _ = library_archive::import_collection(archive.as_path(), parent.as_path(), &app);
+    });
+    Ok(())
 }
 
 #[tauri::command]
@@ -1020,6 +1140,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_collection,
             switch_collection,
+            close_collection,
+            delete_collection_folder,
             rescan_collection,
             get_collection_files,
             get_waveform,
@@ -1039,7 +1161,9 @@ pub fn run() {
             pause_processing,
             resume_processing,
             ffmpeg_is_available,
-            ensure_ffmpeg
+            ensure_ffmpeg,
+            export_collection_library,
+            import_collection_library
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

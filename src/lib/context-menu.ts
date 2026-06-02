@@ -2,7 +2,7 @@ import { useContextMenuVersion } from './store-sync';
 
 export interface ContextMenuItem {
 	label?: string;
-	action?: () => void;
+	action?: () => void | Promise<void>;
 	disabled?: boolean;
 	separator?: boolean;
 }

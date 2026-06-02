@@ -1,4 +1,4 @@
-import { Bug, Folder, Loader2, Plus, Settings } from 'lucide-react';
+import { Bug, Folder, Loader2, Plus, Settings, Upload } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { debugSettingsAccess } from '@/lib/debug-settings-access';
 import {
@@ -6,6 +6,7 @@ import {
 	collectionPathsEqual,
 	normalizeCollectionPath
 } from '@/lib/collection-path';
+import { showContextMenu } from '@/lib/context-menu';
 import { collectionStore } from '@/lib/collection-store';
 import { settingsStore } from '@/lib/settings-store';
 import {
@@ -52,20 +53,71 @@ export default function Sidebar() {
 		await collectionStore.openCollection();
 	}
 
+	async function importLibrary() {
+		if (!isLibraryView) navigate('/');
+		await collectionStore.importLibrary();
+	}
+
+	function onCollectionContextMenu(
+		event: React.MouseEvent,
+		collectionPath: string,
+		isActive: boolean
+	) {
+		if (!isActive) return;
+		event.preventDefault();
+		const busy = collectionStore.switchingCollection;
+		showContextMenu(event.clientX, event.clientY, [
+			{
+				label: 'Export library…',
+				action: () => {
+					void collectionStore.exportLibrary();
+				},
+				disabled: busy || !collectionStore.collectionPath || collectionStore.loading
+			},
+			{ separator: true },
+			{
+				label: 'Unload library',
+				action: () => {
+					void collectionStore.unloadLibrary();
+				},
+				disabled: busy || !collectionStore.collectionPath
+			},
+			{
+				label: 'Delete library…',
+				action: () => {
+					void collectionStore.removeLibrary(collectionPath);
+				},
+				disabled: busy
+			}
+		]);
+	}
+
 	return (
 		<aside className={styles.sidebar}>
 			<header className={styles.sidebarHeader}>
 				<h2 className={styles.sidebarTitle}>Library</h2>
-				<button
-					type="button"
-					className={styles.addBtn}
-					onClick={addLibrary}
-					title="Add library"
-					aria-label="Add library"
-				>
-					<Plus size={14} strokeWidth={2.5} />
-					<span>Add</span>
-				</button>
+				<div className={styles.headerActions}>
+					<button
+						type="button"
+						className={styles.addBtn}
+						onClick={importLibrary}
+						title="Import library"
+						aria-label="Import library"
+					>
+						<Upload size={14} strokeWidth={2.5} />
+						<span>Import</span>
+					</button>
+					<button
+						type="button"
+						className={styles.addBtn}
+						onClick={addLibrary}
+						title="Add library"
+						aria-label="Add library"
+					>
+						<Plus size={14} strokeWidth={2.5} />
+						<span>Add</span>
+					</button>
+				</div>
 			</header>
 
 			<nav className={styles.sidebarNav} aria-label="Collections">
@@ -92,6 +144,9 @@ export default function Sidebar() {
 										title={collectionPath}
 										disabled={collectionStore.switchingCollection}
 										onClick={() => switchCollection(collectionPath)}
+										onContextMenu={(e) =>
+											onCollectionContextMenu(e, collectionPath, isActive)
+										}
 									>
 										<span className={styles.collectionIcon} aria-hidden="true">
 											{isLoading ? (

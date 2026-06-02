@@ -3769,6 +3769,7 @@ dependencies = [
 name = "sonixy"
 version = "0.3.1"
 dependencies = [
+ "flate2",
  "lofty",
  "rayon",
  "rodio",
@@ -3783,6 +3784,7 @@ dependencies = [
  "tauri-plugin-drag",
  "tauri-plugin-fs",
  "tauri-plugin-opener",
+ "time",
  "ureq",
  "uuid",
  "walkdir",

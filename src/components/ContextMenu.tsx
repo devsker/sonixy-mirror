@@ -44,9 +44,9 @@ export default function ContextMenu() {
 
 	if (!contextMenuState.visible) return null;
 
-	function handleAction(action?: () => void) {
-		if (action) action();
+	function handleAction(action?: () => void | Promise<void>) {
 		hideContextMenu();
+		if (action) void Promise.resolve().then(() => action());
 	}
 
 	return (

@@ -1,11 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
+import { confirm as confirmDialog, open, save } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import { remove } from '@tauri-apps/plugin-fs';
 import { audioPlayer } from './audio-player';
 import { settingsStore } from './settings-store';
 import { useCollectionVersion } from './store-sync';
-import { collectionPathsEqual } from './collection-path';
+import { collectionDisplayName, collectionPathsEqual } from './collection-path';
 
 export interface FileItem {
 	id: string;
@@ -56,6 +56,12 @@ class CollectionStore {
 	waveformProgress: Record<string, number> = {};
 	partialWaveforms: Record<string, number[]> = {};
 	isDraggingFromApp = false;
+	private libraryTransferUnlisten: (() => void) | null = null;
+	private activeLibraryTransferTaskId: string | null = null;
+	private pendingImportOpen = false;
+	private libraryProgressRaf: number | null = null;
+	private pendingLibraryProgress: { progress: number; message?: string } | null = null;
+	tasksPanelRequest = 0;
 	get displayedFiles() {
 		let result = [...this.files];
 
@@ -154,6 +160,8 @@ class CollectionStore {
 			});
 
 			// Listen for waveform generation
+			this.setupLibraryTransferListeners();
+
 			listen('waveform-generated', (event) => {
 				const payload = event.payload as { id: string; gain: number };
 				const id = payload.id;
@@ -205,6 +213,228 @@ class CollectionStore {
 
 	notify() {
 		useCollectionVersion.getState().bump();
+	}
+
+	private setupLibraryTransferListeners() {
+		if (this.libraryTransferUnlisten) return;
+
+		const progressUnlisten = listen('library-transfer-progress', (event) => {
+			const payload = event.payload as {
+				phase: string;
+				progress: number;
+				message?: string;
+			};
+			const taskId = this.activeLibraryTransferTaskId;
+			if (!taskId) return;
+
+			this.pendingLibraryProgress = {
+				progress: Math.round(payload.progress * 100),
+				message: payload.message
+			};
+			if (this.libraryProgressRaf !== null) return;
+
+			this.libraryProgressRaf = requestAnimationFrame(() => {
+				this.libraryProgressRaf = null;
+				const pending = this.pendingLibraryProgress;
+				const activeId = this.activeLibraryTransferTaskId;
+				if (!pending || !activeId) return;
+				this.pendingLibraryProgress = null;
+				this.updateTask(activeId, {
+					progress: pending.progress,
+					message: pending.message
+				});
+			});
+		});
+
+		const doneUnlisten = listen('library-transfer-done', (event) => {
+			const payload = event.payload as { phase: string; result_path?: string };
+			const taskId = this.activeLibraryTransferTaskId;
+			if (!taskId) return;
+			this.updateTask(taskId, { progress: 100, status: 'completed' });
+			this.activeLibraryTransferTaskId = null;
+
+			if (payload.phase === 'import' && payload.result_path && this.pendingImportOpen) {
+				this.pendingImportOpen = false;
+				settingsStore.addRecentCollection(payload.result_path);
+				void this.openCollectionByPath(payload.result_path, { force: true });
+			}
+		});
+
+		const errorUnlisten = listen('library-transfer-error', (event) => {
+			const taskId = this.activeLibraryTransferTaskId;
+			if (!taskId) return;
+			this.pendingImportOpen = false;
+			this.updateTask(taskId, {
+				status: 'failed',
+				message: String(event.payload)
+			});
+			this.activeLibraryTransferTaskId = null;
+		});
+
+		this.libraryTransferUnlisten = () => {
+			void progressUnlisten.then((u) => u());
+			void doneUnlisten.then((u) => u());
+			void errorUnlisten.then((u) => u());
+		};
+	}
+
+	private beginLibraryTransferTask(name: string): string {
+		const taskId = `library-transfer-${Math.random().toString(36).slice(2, 9)}`;
+		this.activeLibraryTransferTaskId = taskId;
+		this.tasksPanelRequest += 1;
+		this.addTask({
+			id: taskId,
+			name,
+			progress: 0,
+			status: 'running',
+			message: 'Starting…'
+		});
+		return taskId;
+	}
+
+	private clearOpenCollectionState() {
+		this.collectionPath = null;
+		this.files = [];
+		this.tasks = [];
+		this.processingFiles = new Set();
+		this.processingPaused = false;
+		this.currentlyProcessingIds = new Set();
+		this.waveformProgress = {};
+		this.partialWaveforms = {};
+		this.pendingRelocate = null;
+		this.loading = false;
+		this.endSwitchingUi();
+		localStorage.removeItem('lastCollectionPath');
+	}
+
+	async unloadLibrary() {
+		if (!this.collectionPath || this.switchingCollection) return;
+
+		audioPlayer.stop();
+		try {
+			await invoke('close_collection');
+		} catch (e) {
+			console.error('Failed to unload library', e);
+		}
+		this.clearOpenCollectionState();
+		this.notify();
+	}
+
+	async removeLibrary(path: string) {
+		const name = collectionDisplayName(path);
+		const confirmed = await confirmDialog(
+			`Permanently delete "${name}" and all files inside it?\n\nThis cannot be undone.`,
+			{
+				title: 'Delete library',
+				kind: 'error',
+				okLabel: 'Delete',
+				cancelLabel: 'Cancel'
+			}
+		);
+		if (!confirmed) return;
+
+		if (collectionPathsEqual(this.collectionPath, path)) {
+			await this.unloadLibrary();
+		}
+
+		try {
+			await invoke('delete_collection_folder', { path });
+		} catch (e) {
+			console.error('Failed to delete library', e);
+			this.addTask({
+				id: `delete-library-${Date.now()}`,
+				name: 'Delete library',
+				progress: 0,
+				status: 'failed',
+				message: e instanceof Error ? e.message : String(e)
+			});
+			return;
+		}
+
+		settingsStore.removeRecentCollection(path);
+		const key = path.replace(/\\/g, '/').replace(/\/+$/, '');
+		if (settingsStore.collectionUiByPath[key]) {
+			const { [key]: _, ...rest } = settingsStore.collectionUiByPath;
+			settingsStore.collectionUiByPath = rest;
+			settingsStore.notify();
+		}
+	}
+
+	async exportLibrary() {
+		if (!this.collectionPath) return;
+
+		if (this.tasks.some((t) => t.id === 'waveforms' || t.id === 'conversions')) {
+			this.addTask({
+				id: `export-blocked-${Date.now()}`,
+				name: 'Export library',
+				progress: 0,
+				status: 'failed',
+				message: 'Wait for waveform or conversion tasks to finish before exporting'
+			});
+			return;
+		}
+		if (this.currentlyProcessingIds.size > 0) {
+			this.addTask({
+				id: `export-blocked-${Date.now()}`,
+				name: 'Export library',
+				progress: 0,
+				status: 'failed',
+				message: 'Wait for processing to finish before exporting'
+			});
+			return;
+		}
+
+		const defaultName = `${collectionDisplayName(this.collectionPath)}.sonixylibrary`;
+		const outputPath = await save({
+			title: 'Export library',
+			defaultPath: defaultName,
+			filters: [{ name: 'Sonixy library', extensions: ['sonixylibrary'] }]
+		});
+		if (!outputPath) return;
+
+		this.beginLibraryTransferTask('Exporting library');
+		void invoke('export_collection_library', { outputPath }).catch((e) => {
+			console.error('Failed to start export', e);
+			const taskId = this.activeLibraryTransferTaskId;
+			if (taskId) {
+				this.updateTask(taskId, {
+					status: 'failed',
+					message: e instanceof Error ? e.message : String(e)
+				});
+				this.activeLibraryTransferTaskId = null;
+			}
+		});
+	}
+
+	async importLibrary() {
+		const archivePath = await open({
+			title: 'Import library',
+			multiple: false,
+			filters: [{ name: 'Sonixy library', extensions: ['sonixylibrary'] }]
+		});
+		if (!archivePath || typeof archivePath !== 'string') return;
+
+		const parentDir = await open({
+			directory: true,
+			multiple: false,
+			title: 'Choose parent folder for imported library'
+		});
+		if (!parentDir || typeof parentDir !== 'string') return;
+
+		this.pendingImportOpen = true;
+		this.beginLibraryTransferTask('Importing library');
+		void invoke('import_collection_library', { archivePath, parentDir }).catch((e) => {
+			console.error('Failed to start import', e);
+			this.pendingImportOpen = false;
+			const taskId = this.activeLibraryTransferTaskId;
+			if (taskId) {
+				this.updateTask(taskId, {
+					status: 'failed',
+					message: e instanceof Error ? e.message : String(e)
+				});
+				this.activeLibraryTransferTaskId = null;
+			}
+		});
 	}
 
 	private static readonly ETA_WINDOW_MS = 20_000;
