@@ -116,6 +116,44 @@
 		if (showDropPrompt) handleDropCancel();
 	}
 
+	function handleDomDragOver(e: DragEvent) {
+		if (collectionStore.isDraggingFromApp) return;
+		if (!collectionStore.collectionPath) return;
+		if (!e.dataTransfer) return;
+		e.preventDefault();
+		e.dataTransfer.dropEffect = 'copy';
+	}
+
+	function handleDomDrop(e: DragEvent) {
+		if (collectionStore.isDraggingFromApp) return;
+		if (!collectionStore.collectionPath) return;
+		if (!e.dataTransfer) return;
+
+		e.preventDefault();
+
+		const collectionPath = collectionStore.collectionPath.replace(/[\\\/]+/g, '/');
+		const droppedPaths = Array.from(e.dataTransfer.files)
+			.map((file) => (file as File & { path?: string }).path)
+			.filter((p): p is string => typeof p === 'string' && p.length > 0)
+			.filter((path) => {
+				const normalizedPath = path.replace(/[\\\/]+/g, '/');
+				if (normalizedPath === collectionPath) return false;
+				if (
+					normalizedPath.startsWith(
+						collectionPath.endsWith('/') ? collectionPath : `${collectionPath}/`
+					)
+				) {
+					return false;
+				}
+				return true;
+			});
+
+		if (droppedPaths.length > 0) {
+			dropPaths = droppedPaths;
+			showDropPrompt = true;
+		}
+	}
+
 	function applyTheme(value: string) {
 		const root = document.documentElement;
 		root.classList.remove('light', 'dark');
@@ -155,6 +193,8 @@
 <svelte:window 
 	onkeydown={handleKeydown} 
 	onclick={closeDropPrompt} 
+	ondragover={handleDomDragOver}
+	ondrop={handleDomDrop}
 	oncontextmenu={(e) => e.preventDefault()}
 />
 

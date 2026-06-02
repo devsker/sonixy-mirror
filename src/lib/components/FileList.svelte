@@ -209,9 +209,11 @@
 	};
 
 	let draggingColumn = $state<string | null>(null);
+	let dragOverColumn = $state<string | null>(null);
 
 	function handleDragStart(event: DragEvent, id: string) {
 		draggingColumn = id;
+		dragOverColumn = null;
 		if (event.dataTransfer) {
 			event.dataTransfer.effectAllowed = 'move';
 			event.dataTransfer.setData('text/plain', id);
@@ -223,22 +225,41 @@
 		if (event.dataTransfer) {
 			event.dataTransfer.dropEffect = 'move';
 		}
-		
-		if (draggingColumn && draggingColumn !== targetId) {
-			const fromIndex = settings.columnOrder.indexOf(draggingColumn);
-			const toIndex = settings.columnOrder.indexOf(targetId);
-			
-			if (fromIndex !== -1 && toIndex !== -1) {
-				const newOrder = [...settings.columnOrder];
-				newOrder.splice(fromIndex, 1);
-				newOrder.splice(toIndex, 0, draggingColumn);
-				settings.columnOrder = newOrder;
-			}
+		dragOverColumn = targetId;
+	}
+
+	function handleDrop(event: DragEvent, targetId: string) {
+		event.preventDefault();
+		if (!draggingColumn || draggingColumn === targetId) {
+			dragOverColumn = null;
+			return;
 		}
+
+		const fromIndex = settings.columnOrder.indexOf(draggingColumn);
+		const toIndex = settings.columnOrder.indexOf(targetId);
+		if (fromIndex === -1 || toIndex === -1) {
+			dragOverColumn = null;
+			return;
+		}
+
+		const newOrder = [...settings.columnOrder];
+		newOrder.splice(fromIndex, 1);
+		newOrder.splice(toIndex, 0, draggingColumn);
+		settings.columnOrder = newOrder;
+		dragOverColumn = null;
 	}
 
 	function handleDragEnd() {
 		draggingColumn = null;
+		dragOverColumn = null;
+	}
+
+	function handleDragLeave(event: DragEvent, columnId: string) {
+		const next = event.relatedTarget as Node | null;
+		const current = event.currentTarget as Node | null;
+		if (dragOverColumn === columnId && (!current || !next || !current.contains(next))) {
+			dragOverColumn = null;
+		}
 	}
 
 	function fileDragOptions(file: FileItem) {
@@ -529,6 +550,7 @@
 						class:sortable={config.sortable}
 						class:filterable={!!config.filterable}
 						class:dragging={draggingColumn === columnId}
+						class:drop-target={dragOverColumn === columnId && draggingColumn !== columnId}
 						onclick={(e) => {
 							if (config.sortable) toggleSort(columnId);
 							else if (config.filterable) toggleFilterPopover(config.filterable, e);
@@ -543,6 +565,8 @@
 						ondragstart={(e) => handleDragStart(e, columnId)}
 						ondragover={(e) => handleDragOver(e, columnId)}
 						ondragenter={(e) => e.preventDefault()}
+						ondrop={(e) => handleDrop(e, columnId)}
+						ondragleave={(e) => handleDragLeave(e, columnId)}
 						ondragend={handleDragEnd}
 						role="button"
 						tabindex="0"
@@ -848,6 +872,7 @@
 		color: var(--text-muted);
 		white-space: nowrap;
 		height: 48px;
+		position: relative;
 	}
 
 	.header-content {
@@ -885,6 +910,23 @@
 	th.dragging {
 		opacity: 0.5;
 		background-color: var(--border-color);
+	}
+
+	th.drop-target .header-content {
+		background-color: rgba(0, 122, 204, 0.08);
+	}
+
+	th.drop-target::before {
+		content: '';
+		position: absolute;
+		left: 1px;
+		top: 8px;
+		bottom: 8px;
+		width: 2px;
+		background: var(--icon-active);
+		box-shadow: 0 0 2px var(--icon-active);
+		pointer-events: none;
+		border-radius: 2px;
 	}
 
 	:global(html.dark) th.sortable:hover .header-content,
