@@ -14,7 +14,6 @@ import { audioPlayer } from '@/lib/audio-player';
 import { settingsStore } from '@/lib/settings-store';
 import { preloadDragIcon } from '@/lib/file-drag';
 import { useStoreVersion, useCollectionVersion, useSettingsVersion } from '@/lib/store-sync';
-import styles from './App.module.css';
 
 function applyTheme(value: string) {
 	const root = document.documentElement;
@@ -221,11 +220,11 @@ export default function App() {
 	});
 
 	return (
-		<div className={styles.appContainer}>
+		<div className="app-container">
 			<Titlebar />
-			<div className={styles.appLayout}>
+			<div className="app-layout">
 				<Sidebar />
-				<main className={styles.content}>
+				<main className="app-content">
 					<Routes>
 						<Route path="/" element={<HomePage />} />
 						<Route path="/settings" element={<SettingsPage />} />
@@ -239,7 +238,7 @@ export default function App() {
 			<ContextMenu />
 
 			{ffmpegDownloadMessage && (
-				<div className={styles.ffmpegDownloadBanner} role="status">
+				<div className="ffmpeg-banner" role="status">
 					<p>{ffmpegDownloadMessage}</p>
 					<progress max={1} value={ffmpegDownloadProgress} />
 				</div>

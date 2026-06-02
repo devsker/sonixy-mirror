@@ -5,7 +5,6 @@ import { collectionStore } from '@/lib/collection-store';
 import { audioPlayer } from '@/lib/audio-player';
 import { collectionDisplayName } from '@/lib/collection-path';
 import { useStoreVersion, useCollectionVersion, useAudioVersion } from '@/lib/store-sync';
-import styles from './HomePage.module.css';
 
 export default function HomePage() {
 	useStoreVersion(useCollectionVersion);
@@ -17,11 +16,11 @@ export default function HomePage() {
 	const displayId = audioPlayer.currentFileId || (selectedIds.length === 1 ? selectedIds[0] : null);
 
 	return (
-		<div className={styles.pageContainer} key={collectionPath ?? 'none'}>
+		<div className="page-container" key={collectionPath ?? 'none'}>
 			{collectionPath && (
-				<div className={styles.waveformSection}>
+				<div className="waveform-section">
 					{collectionStore.showSwitchingUi ? (
-						<div className={`${styles.selectionMessage} ${styles.switching}`}>
+						<div className="selection-message switching">
 							Opening{' '}
 							{collectionDisplayName(
 								collectionStore.switchingToPath ?? collectionStore.collectionPath
@@ -31,9 +30,9 @@ export default function HomePage() {
 					) : displayId ? (
 						<Waveform id={displayId} />
 					) : selectedIds.length > 1 ? (
-						<div className={styles.selectionMessage}>More than one file selected</div>
+						<div className="selection-message">More than one file selected</div>
 					) : (
-						<div className={styles.selectionMessage}>No file selected</div>
+						<div className="selection-message">No file selected</div>
 					)}
 				</div>
 			)}

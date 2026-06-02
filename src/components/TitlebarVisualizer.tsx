@@ -22,7 +22,6 @@ import {
 import { useSettingsVersion, useStoreVersion } from '@/lib/store-sync';
 import { MacTrafficLights } from './MacTrafficLights';
 import { LinuxWindowControls } from './LinuxWindowControls';
-import styles from './TitlebarVisualizer.module.css';
 
 const ALL_ELEMENTS = [
 	{ id: 'title', label: 'App Title', icon: null as null },
@@ -156,26 +155,20 @@ export function TitlebarVisualizer({ settings }: TitlebarVisualizerProps) {
 	};
 
 	const windowControls = (
-		<div
-			className={`${styles.windowControls} ${showMacTrafficLights ? styles.windowControlsMacos : ''} ${showLinuxWindowControls ? styles.windowControlsLinux : ''}`}
-		>
+		<div className="window-controls">
 			{showMacTrafficLights ? (
 				<MacTrafficLights preview />
 			) : showLinuxWindowControls ? (
 				<LinuxWindowControls preview />
 			) : (
 				<>
-					<button type="button" className={styles.controlBtn} aria-label="Minimize">
+					<button type="button" className="control-btn" aria-label="Minimize">
 						<Minus size={14} />
 					</button>
-					<button type="button" className={styles.controlBtn} aria-label="Maximize">
+					<button type="button" className="control-btn" aria-label="Maximize">
 						<Square size={12} />
 					</button>
-					<button
-						type="button"
-						className={`${styles.controlBtn} ${styles.closeBtn}`}
-						aria-label="Close"
-					>
+					<button type="button" className="control-btn close-btn" aria-label="Close">
 						<X size={14} />
 					</button>
 				</>
@@ -186,36 +179,28 @@ export function TitlebarVisualizer({ settings }: TitlebarVisualizerProps) {
 	const renderPreviewElement = (id: string) => {
 		if (id === 'title') {
 			return (
-				<div className={`${styles.titleContainer} ${styles.draggableElement}`}>
-					<span className={styles.title}>Sonixy</span>
+				<div className="title-container draggable-element">
+					<span className="title">Sonixy</span>
 				</div>
 			);
 		}
 		if (id === 'folder') {
 			return (
-				<button
-					type="button"
-					className={`${styles.folderBtn} ${styles.draggableElement}`}
-					aria-label="Open Collection"
-				>
+				<button type="button" className="folder-btn draggable-element" aria-label="Open Collection">
 					<FolderOpen size={14} />
 				</button>
 			);
 		}
 		if (id === 'playback') {
 			return (
-				<div className={`${styles.playbackControls} ${styles.draggableElement}`}>
-					<button type="button" className={styles.playbackBtn} aria-label="Previous">
+				<div className="playback-controls draggable-element">
+					<button type="button" className="playback-btn" aria-label="Previous">
 						<SkipBack size={14} fill="currentColor" />
 					</button>
-					<button
-						type="button"
-						className={`${styles.playbackBtn} ${styles.playPause}`}
-						aria-label="Play"
-					>
+					<button type="button" className="playback-btn play-pause" aria-label="Play">
 						<Play size={16} fill="currentColor" />
 					</button>
-					<button type="button" className={styles.playbackBtn} aria-label="Next">
+					<button type="button" className="playback-btn" aria-label="Next">
 						<SkipForward size={14} fill="currentColor" />
 					</button>
 				</div>
@@ -223,22 +208,18 @@ export function TitlebarVisualizer({ settings }: TitlebarVisualizerProps) {
 		}
 		if (id === 'volume') {
 			return (
-				<div className={`${styles.volumeControl} ${styles.draggableElement}`}>
-					<button type="button" className={`${styles.playbackBtn} ${styles.volumeBtn}`}>
+				<div className="volume-control draggable-element">
+					<button type="button" className="playback-btn">
 						<Volume2 size={14} />
 					</button>
-					<div className={styles.volumeSliderMock} />
+					<div className="volume-slider-mock" />
 				</div>
 			);
 		}
 		if (id === 'tasks') {
 			return (
-				<div className={`${styles.taskContainer} ${styles.draggableElement}`}>
-					<button
-						type="button"
-						className={`${styles.controlBtn} ${styles.taskBtn}`}
-						aria-label="Background Tasks"
-					>
+				<div className="task-container draggable-element">
+					<button type="button" className="control-btn task-btn" aria-label="Background Tasks">
 						<svg width="18" height="18" viewBox="0 0 18 18">
 							<circle
 								cx="9"
@@ -254,7 +235,7 @@ export function TitlebarVisualizer({ settings }: TitlebarVisualizerProps) {
 								cy="9"
 								r="7"
 								fill="none"
-								stroke="var(--accent-color, #3b82f6)"
+								stroke="var(--accent-color)"
 								strokeWidth="2"
 								strokeDasharray="44"
 								strokeDashoffset="11"
@@ -268,19 +249,15 @@ export function TitlebarVisualizer({ settings }: TitlebarVisualizerProps) {
 		}
 		if (id === 'refresh') {
 			return (
-				<button
-					type="button"
-					className={`${styles.controlBtn} ${styles.draggableElement}`}
-					aria-label="Refresh"
-				>
+				<button type="button" className="control-btn draggable-element" aria-label="Refresh">
 					<RefreshCw size={14} />
 				</button>
 			);
 		}
 		if (id === 'spacer') {
 			return (
-				<div className={`${styles.spacer} ${styles.draggableElement}`}>
-					<div className={styles.spacerHandle}>
+				<div className="spacer draggable-element">
+					<div className="spacer-handle">
 						<GripVertical size={10} />
 					</div>
 				</div>
@@ -291,18 +268,16 @@ export function TitlebarVisualizer({ settings }: TitlebarVisualizerProps) {
 
 	const sectionKeys: SectionKey[] = ['left', 'center', 'right'];
 	const sectionAreaClass: Record<SectionKey, string> = {
-		left: styles.titlebarLeft,
-		center: styles.titlebarCenter,
-		right: styles.titlebarRight
+		left: 'titlebar-left',
+		center: 'titlebar-center',
+		right: 'titlebar-right'
 	};
 
 	return (
-		<div className={styles.visualizer} role="presentation" onDragEnd={resetDragState}>
-			<div className={styles.titlebarMock}>
+		<div className="titlebar-visualizer" role="presentation" onDragEnd={resetDragState}>
+			<div className="titlebar-mock">
 				{pinWindowControlsLeft && (
-					<div className={`${styles.titlebarPinned} ${styles.titlebarPinnedLeft}`}>
-						{windowControls}
-					</div>
+					<div className="titlebar-pinned titlebar-pinned-left">{windowControls}</div>
 				)}
 
 				{sectionKeys.map((section) => {
@@ -310,7 +285,7 @@ export function TitlebarVisualizer({ settings }: TitlebarVisualizerProps) {
 					return (
 						<div
 							key={section}
-							className={`${styles.titlebarSection} ${sectionAreaClass[section]} ${styles.droppableSection} ${dragOverSection === section && dragOverIndex === null ? styles.droppableSectionDragOver : ''}`}
+							className={`titlebar-section ${sectionAreaClass[section]} droppable-section${dragOverSection === section && dragOverIndex === null ? ' droppable-section-drag-over' : ''}`}
 							role="presentation"
 							onDragOver={(e) => handleDragOver(e, section)}
 							onDrop={(e) => handleDrop(e, section)}
@@ -318,7 +293,7 @@ export function TitlebarVisualizer({ settings }: TitlebarVisualizerProps) {
 							{sectionData.map((item, i) => (
 								<div
 									key={`${item.index}-${item.id}`}
-									className={`${styles.elementWrapper} ${dragOverSection === section && dragOverIndex === i ? styles.dropTarget : ''}`}
+									className={`element-wrapper${dragOverSection === section && dragOverIndex === i ? ' drop-target' : ''}`}
 									role="presentation"
 									draggable
 									onDragStart={(e) => handleDragStart(e, item.id, item.index)}
@@ -334,7 +309,7 @@ export function TitlebarVisualizer({ settings }: TitlebarVisualizerProps) {
 									{renderPreviewElement(item.id)}
 									<button
 										type="button"
-										className={styles.removeBtn}
+										className="remove-btn"
 										onClick={() => removeElement(item.index)}
 										title="Remove"
 									>
@@ -342,32 +317,30 @@ export function TitlebarVisualizer({ settings }: TitlebarVisualizerProps) {
 									</button>
 								</div>
 							))}
-							{sectionData.length === 0 && <div className={styles.emptyPlaceholder}>Empty</div>}
+							{sectionData.length === 0 && <div className="empty-placeholder">Empty</div>}
 						</div>
 					);
 				})}
 
 				{!pinWindowControlsLeft && (
-					<div className={`${styles.titlebarPinned} ${styles.titlebarPinnedRight}`}>
-						{windowControls}
-					</div>
+					<div className="titlebar-pinned titlebar-pinned-right">{windowControls}</div>
 				)}
 			</div>
 
-			<div className={styles.poolContainer}>
+			<div className="pool-container">
 				<div
-					className={`${styles.elementPool} ${dragOverSection === 'pool' ? styles.elementPoolDragOver : ''}`}
+					className={`element-pool${dragOverSection === 'pool' ? ' element-pool-drag-over' : ''}`}
 					role="presentation"
 					onDragOver={(e) => handleDragOver(e, 'pool')}
 					onDrop={(e) => handleDrop(e, 'pool')}
 				>
-					<div className={styles.poolLabel}>Available:</div>
+					<div className="pool-label">Available:</div>
 					{availableElements.map((el, i) => {
 						const Icon = el.icon;
 						return (
 							<div
 								key={`${el.id}-${i}`}
-								className={styles.poolItem}
+								className="pool-item"
 								role="presentation"
 								draggable
 								title={el.label}
@@ -376,19 +349,19 @@ export function TitlebarVisualizer({ settings }: TitlebarVisualizerProps) {
 								{Icon ? (
 									<Icon size={14} />
 								) : el.id === 'title' ? (
-									<span className={styles.poolTextIcon}>T</span>
+									<span className="pool-text-icon">T</span>
 								) : el.id === 'tasks' ? (
 									<div
-										className={styles.circleMock}
+										className="circle-mock"
 										style={{ width: 10, height: 10, borderWidth: 1 }}
 									/>
 								) : (
-									<span className={styles.poolTextIcon}>{el.label[0]}</span>
+									<span className="pool-text-icon">{el.label[0]}</span>
 								)}
 							</div>
 						);
 					})}
-					{availableElements.length === 0 && <div className={styles.emptyPool}>None left</div>}
+					{availableElements.length === 0 && <div className="empty-pool">None left</div>}
 				</div>
 			</div>
 		</div>

@@ -27,7 +27,6 @@ import {
 } from '@/lib/store-sync';
 import { useExternalFileDrag } from '@/lib/use-external-file-drag';
 import type { ExternalFileDragOptions } from '@/lib/file-drag';
-import styles from './FileList.module.css';
 
 const columnConfigs: Record<
 	string,
@@ -113,39 +112,39 @@ function FileRow({
 	return (
 		<tr
 			ref={setRowRef}
-			className={`${styles.fileRow} ${file.selected ? styles.fileRowSelected : ''} ${file.missing ? styles.fileRowMissing : ''} ${isLocked ? styles.fileRowLocked : ''}`}
+			className={`file-row${file.selected ? ' file-row-selected' : ''}${file.missing ? ' file-row-missing' : ''}${isLocked ? ' file-row-locked' : ''}`}
 			onClick={(e) => onSelection(e, index)}
 			onKeyDown={(e) => e.key === 'Enter' && onSelection(e as unknown as MouseEvent, index)}
 			onContextMenu={(e) => onContextMenu(e, file)}
 			tabIndex={0}
 		>
 			{showCheckboxes && (
-				<td className={styles.checkboxCol}>
-					<label className={styles.customCheckbox}>
+				<td className="checkbox-col">
+					<label className="checkbox">
 						<input
 							type="checkbox"
 							checked={file.selected}
 							onChange={(e) => onSelection(e as unknown as MouseEvent, index)}
 						/>
-						<span className={styles.checkmark} />
+						<span className="checkbox-mark" />
 					</label>
 				</td>
 			)}
 			{columnOrder.map((columnId) => {
 				if (columnId === 'filename') {
 					return (
-						<td key={columnId} className={styles.filenameCol} title={file.filename}>
-							<div className={styles.nameWrapper}>
+						<td key={columnId} className="filename-col" title={file.filename}>
+							<div className="name-wrapper">
 								{processingFiles.has(file.id) && (
 									<span
-										className={`${styles.processingIcon} ${!currentlyProcessingIds.has(file.id) ? styles.processingIconQueued : ''} ${processingPaused ? styles.processingIconPaused : ''}`}
+										className={`processing-icon${!currentlyProcessingIds.has(file.id) ? ' processing-icon-queued' : ''}${processingPaused ? ' processing-icon-paused' : ''}`}
 										title={currentlyProcessingIds.has(file.id) ? 'Processing...' : 'Queued'}
 									>
 										{currentlyProcessingIds.has(file.id) ? (
-											<svg className={styles.progressCircle} viewBox="0 0 16 16">
-												<circle className={styles.bg} cx="8" cy="8" r="6" />
+											<svg className="progress-circle" viewBox="0 0 16 16">
+												<circle className="bg" cx="8" cy="8" r="6" />
 												<circle
-													className={styles.fg}
+													className="fg"
 													cx="8"
 													cy="8"
 													r="6"
@@ -159,12 +158,12 @@ function FileRow({
 									</span>
 								)}
 								{file.missing && (
-									<span className={styles.warningIcon} title="File not found">
+									<span className="warning-icon" title="File not found">
 										<AlertTriangle size={14} />
 									</span>
 								)}
 								<span
-									className={audioPlayer.currentFileId === file.id ? styles.playing : undefined}
+									className={audioPlayer.currentFileId === file.id ? "playing" : undefined}
 								>
 									{getDisplayName(file.filename)}
 								</span>
@@ -174,12 +173,12 @@ function FileRow({
 				}
 				if (columnId === 'format') {
 					return (
-						<td key={columnId} className={styles.formatCol}>
+						<td key={columnId} className="format-col">
 							{file.missing ? (
-								<div className={styles.missingActions}>
+								<div className="missing-actions">
 									<button
 										type="button"
-										className={styles.actionIcon}
+										className="action-icon"
 										onClick={(e) => {
 											e.stopPropagation();
 											collectionStore.relocateFile(file.id);
@@ -190,7 +189,7 @@ function FileRow({
 									</button>
 									<button
 										type="button"
-										className={`${styles.actionIcon} ${styles.actionIconDanger}`}
+										className="action-icon action-icon-danger"
 										onClick={(e) => {
 											e.stopPropagation();
 											collectionStore.removeFile(file.id);
@@ -208,29 +207,29 @@ function FileRow({
 				}
 				if (columnId === 'length') {
 					return (
-						<td key={columnId} className={styles.lengthCol}>
+						<td key={columnId} className="length-col">
 							{file.missing ? '-' : file.length}
 						</td>
 					);
 				}
 				if (columnId === 'size') {
 					return (
-						<td key={columnId} className={styles.sizeCol}>
+						<td key={columnId} className="size-col">
 							{file.missing ? '-' : file.size}
 						</td>
 					);
 				}
 				if (columnId === 'tags') {
 					return (
-						<td key={columnId} className={styles.tagsCol}>
+						<td key={columnId} className="tags-col">
 							{!file.missing && (
-								<div className={styles.tagsWrapper}>
+								<div className="tags-wrapper">
 									{file.tags.map((tag) => (
-										<span key={tag} className={styles.tag}>
+										<span key={tag} className="tag">
 											{tag}
 											<button
 												type="button"
-												className={styles.tagRemove}
+												className="tag-remove"
 												onClick={(e) => {
 													e.stopPropagation();
 													onRemoveTag(file, tag);
@@ -243,11 +242,11 @@ function FileRow({
 									))}
 
 									{taggingFileId === file.id ? (
-										<span className={`${styles.tag} ${styles.tagTagging}`}>
-											<span className={styles.inputMirror}>{newTagValue || 'Tag...'}</span>
+										<span className="tag tag-tagging">
+											<span className="input-mirror">{newTagValue || 'Tag...'}</span>
 											<input
 												type="text"
-												className={styles.tagInputInline}
+												className="tag-input-inline"
 												ref={onTagInputRef}
 												value={newTagValue}
 												onChange={(e) => onNewTagValueChange(e.target.value)}
@@ -272,7 +271,7 @@ function FileRow({
 									) : (
 										<button
 											type="button"
-											className={styles.tagAddBtn}
+											className="tag-add-btn"
 											onClick={(e) => {
 												e.stopPropagation();
 												onStartTagging(file);
@@ -678,7 +677,7 @@ export function FileList({ onSelectionChange }: FileListProps) {
 	const containerContextMenu = (e: React.MouseEvent) => {
 		if (
 			e.target === e.currentTarget ||
-			(e.target as HTMLElement).classList.contains(styles.emptyState)
+			(e.target as HTMLElement).classList.contains("empty-state")
 		) {
 			e.preventDefault();
 			showContextMenu(e.clientX, e.clientY, [
@@ -692,43 +691,43 @@ export function FileList({ onSelectionChange }: FileListProps) {
 	return (
 		<>
 			{fileToRemove && (
-				<div className={styles.modalBackdrop} onClick={closeRemoveDialog} role="presentation">
+				<div className="modal-backdrop" onClick={closeRemoveDialog} role="presentation">
 					<div
-						className={styles.modalContent}
+						className="modal-content modal-content--padded"
 						onClick={(e) => e.stopPropagation()}
 						role="presentation"
 					>
-						<div className={styles.modalHeader}>
-							<AlertTriangle size={24} className={styles.warningIconLarge} />
+						<div className="modal-header">
+							<AlertTriangle size={24} className="warning-icon-large" />
 							<h3>Remove File</h3>
 						</div>
-						<div className={styles.modalBody}>
+						<div className="modal-body">
 							<p>
 								How would you like to remove <strong>{fileToRemove.filename}</strong>?
 							</p>
-							<p className={styles.warningText}>
+							<p className="warning-text">
 								&quot;Remove from Disk&quot; will permanently delete the file.
 							</p>
 						</div>
-						<div className={styles.modalFooter}>
+						<div className="modal-footer">
 							<button
 								type="button"
-								className={`${styles.modalBtn} ${styles.modalBtnSecondary}`}
+																className="modal-btn modal-btn-secondary"
 								onClick={closeRemoveDialog}
 							>
 								Cancel
 							</button>
-							<div className={styles.dangerGroup}>
+							<div className="danger-group">
 								<button
 									type="button"
-									className={`${styles.modalBtn} ${styles.modalBtnDangerOutline}`}
+									className="modal-btn modal-btn-danger-outline"
 									onClick={() => void confirmRemoveFromCollection()}
 								>
 									Remove from Collection
 								</button>
 								<button
 									type="button"
-									className={`${styles.modalBtn} ${styles.modalBtnDanger}`}
+									className="modal-btn modal-btn-danger"
 									onClick={() => void confirmRemoveFromDisk()}
 								>
 									Remove from Disk
@@ -740,37 +739,37 @@ export function FileList({ onSelectionChange }: FileListProps) {
 			)}
 
 			{batchTagMode === 'add' && (
-				<div className={styles.modalBackdrop} onClick={closeTagDialog} role="presentation">
+				<div className="modal-backdrop" onClick={closeTagDialog} role="presentation">
 					<div
-						className={styles.modalContent}
+						className="modal-content modal-content--padded"
 						onClick={(e) => e.stopPropagation()}
 						role="presentation"
 					>
-						<div className={styles.modalHeader}>
+						<div className="modal-header">
 							<Tag size={24} />
 							<h3>Add tag to {batchTagIds.length} files</h3>
 						</div>
-						<div className={styles.modalBody}>
+						<div className="modal-body">
 							<input
 								type="text"
-								className={styles.batchTagInput}
+								className="batch-tag-input"
 								value={newTagValue}
 								onChange={(e) => setNewTagValue(e.target.value)}
 								placeholder="Tag name"
 								onKeyDown={(e) => e.key === 'Enter' && void handleAddTag()}
 							/>
 						</div>
-						<div className={styles.modalFooter}>
+						<div className="modal-footer">
 							<button
 								type="button"
-								className={`${styles.modalBtn} ${styles.modalBtnSecondary}`}
+																className="modal-btn modal-btn-secondary"
 								onClick={closeTagDialog}
 							>
 								Cancel
 							</button>
 							<button
 								type="button"
-								className={`${styles.modalBtn} ${styles.modalBtnPrimary}`}
+																className="modal-btn modal-btn-primary"
 								onClick={() => void handleAddTag()}
 							>
 								Add
@@ -781,19 +780,19 @@ export function FileList({ onSelectionChange }: FileListProps) {
 			)}
 
 			{batchTagMode === 'remove' && (
-				<div className={styles.modalBackdrop} onClick={closeTagDialog} role="presentation">
+				<div className="modal-backdrop" onClick={closeTagDialog} role="presentation">
 					<div
-						className={styles.modalContent}
+						className="modal-content modal-content--padded"
 						onClick={(e) => e.stopPropagation()}
 						role="presentation"
 					>
-						<div className={styles.modalHeader}>
+						<div className="modal-header">
 							<Tag size={24} />
 							<h3>Remove tag from {batchTagIds.length} files</h3>
 						</div>
-						<div className={styles.modalBody}>
+						<div className="modal-body">
 							<select
-								className={styles.batchTagSelect}
+								className="batch-tag-select"
 								value={batchRemoveTagValue}
 								onChange={(e) => setBatchRemoveTagValue(e.target.value)}
 							>
@@ -804,17 +803,17 @@ export function FileList({ onSelectionChange }: FileListProps) {
 								))}
 							</select>
 						</div>
-						<div className={styles.modalFooter}>
+						<div className="modal-footer">
 							<button
 								type="button"
-								className={`${styles.modalBtn} ${styles.modalBtnSecondary}`}
+																className="modal-btn modal-btn-secondary"
 								onClick={closeTagDialog}
 							>
 								Cancel
 							</button>
 							<button
 								type="button"
-								className={`${styles.modalBtn} ${styles.modalBtnPrimary}`}
+																className="modal-btn modal-btn-primary"
 								onClick={() => void handleBatchRemoveTag()}
 							>
 								Remove
@@ -825,46 +824,46 @@ export function FileList({ onSelectionChange }: FileListProps) {
 			)}
 
 			<div
-				className={styles.fileListContainer}
+				className="file-list-container"
 				role="presentation"
 				onContextMenu={containerContextMenu}
 			>
 				{!collectionPath ? (
-					<div className={styles.emptyState}>
+					<div className="empty-state">
 						<FolderOpen size={48} />
 						<h2>No collection open</h2>
 						<p>Select a folder to start managing your audio files</p>
 						<button
 							type="button"
-							className={styles.openBtn}
+							className="open-btn"
 							onClick={() => collectionStore.openCollection()}
 						>
 							Open Collection
 						</button>
 					</div>
 				) : showSwitchingUi ? (
-					<div className={styles.emptyState}>
-						<Loader2 size={48} className={styles.animateSpin} />
+					<div className="empty-state">
+						<Loader2 size={48} className="animate-spin" />
 						<h2>Opening library</h2>
 						<p>{collectionDisplayName(switchingToPath ?? collectionPath)}</p>
 					</div>
 				) : loading && files.length === 0 ? (
-					<div className={styles.emptyState}>
-						<Loader2 size={48} className={styles.animateSpin} />
+					<div className="empty-state">
+						<Loader2 size={48} className="animate-spin" />
 						<p>Scanning files…</p>
 					</div>
 				) : files.length === 0 ? (
-					<div className={styles.emptyState}>
+					<div className="empty-state">
 						<Filter size={48} />
 						<h2>No audio files found</h2>
 						<p>Try adding some audio files to the folder or drag them here</p>
 					</div>
 				) : (
 					<>
-						<div className={styles.fileListToolbar}>
+						<div className="file-list-toolbar">
 							<input
 								type="search"
-								className={styles.filenameSearch}
+								className="filename-search"
 								placeholder="Filter by filename…"
 								value={settingsStore.filenameQuery}
 								onInput={(e) => {
@@ -881,20 +880,20 @@ export function FileList({ onSelectionChange }: FileListProps) {
 							/>
 						</div>
 						<table
-							className={`${styles.fileTable} ${!showCheckboxes ? styles.fileTableNoCheckboxes : ''}`}
+							className={`file-table${!showCheckboxes ? ' file-table-no-checkboxes' : ''}`}
 						>
 							<thead>
 								<tr>
 									{showCheckboxes && (
-										<th className={styles.checkboxCol}>
-											<label className={styles.customCheckbox}>
+										<th className="checkbox-col">
+											<label className="checkbox">
 												<input
 													ref={selectAllRef}
 													type="checkbox"
 													checked={allSelected}
 													onChange={toggleAll}
 												/>
-												<span className={styles.checkmark} />
+												<span className="checkbox-mark" />
 											</label>
 										</th>
 									)}
@@ -903,7 +902,7 @@ export function FileList({ onSelectionChange }: FileListProps) {
 										return (
 											<th
 												key={columnId}
-												className={`${styles[`${columnId}Col` as keyof typeof styles] ?? ''} ${config.sortable ? styles.sortableTh : ''} ${config.filterable ? styles.filterableTh : ''} ${draggingColumn === columnId ? styles.draggingTh : ''} ${dragOverColumn === columnId && draggingColumn !== columnId ? styles.dropTargetTh : ''}`}
+												className={`${columnId}-col${config.sortable ? ' sortable-th' : ''}${config.filterable ? ' filterable-th' : ''}${draggingColumn === columnId ? ' dragging-th' : ''}${dragOverColumn === columnId && draggingColumn !== columnId ? ' drop-target-th' : ''}`}
 												onClick={(e) => {
 													if (config.sortable) toggleSort(columnId);
 													else if (config.filterable) toggleFilterPopover(config.filterable, e);
@@ -925,10 +924,10 @@ export function FileList({ onSelectionChange }: FileListProps) {
 												role="button"
 												tabIndex={0}
 											>
-												<div className={styles.headerContent}>
+												<div className="header-content">
 													<span>{config.label}</span>
 													{config.sortable && sortColumn === columnId && (
-														<span className={styles.statusIcon}>
+														<span className="status-icon">
 															{sortDirection === 'asc' ? (
 																<ChevronUp size={14} />
 															) : (
@@ -937,43 +936,43 @@ export function FileList({ onSelectionChange }: FileListProps) {
 														</span>
 													)}
 													{config.filterable === 'format' && selectedFormats.length > 0 && (
-														<span className={`${styles.statusIcon} ${styles.statusIconActive}`}>
+														<span className="status-icon status-icon-active">
 															<Filter size={12} />
 														</span>
 													)}
 													{config.filterable === 'tags' && selectedTags.length > 0 && (
-														<span className={`${styles.statusIcon} ${styles.statusIconActive}`}>
+														<span className="status-icon status-icon-active">
 															<Filter size={12} />
 														</span>
 													)}
 
 													{config.filterable === 'format' && activePopover === 'format' && (
 														<div
-															className={styles.popover}
+															className="filter-popover"
 															onClick={(e) => e.stopPropagation()}
 															onKeyDown={(e) => e.stopPropagation()}
 															role="presentation"
 														>
-															<div className={styles.popoverHeader}>Filter Formats</div>
-															<div className={styles.popoverList}>
+															<div className="filter-popover-header">Filter Formats</div>
+															<div className="filter-popover-list">
 																{allFormats.map((format) => (
-																	<label key={format} className={styles.popoverItem}>
-																		<div className={styles.customCheckbox}>
+																	<label key={format} className="filter-popover-item">
+																		<div className="checkbox">
 																			<input
 																				type="checkbox"
 																				checked={selectedFormats.includes(format)}
 																				onChange={() => toggleFormatFilter(format)}
 																			/>
-																			<span className={styles.checkmark} />
+																			<span className="checkbox-mark" />
 																		</div>
-																		<span className={styles.itemLabel}>{format}</span>
+																		<span className="item-label">{format}</span>
 																	</label>
 																))}
 															</div>
 															{selectedFormats.length > 0 && (
 																<button
 																	type="button"
-																	className={styles.clearBtn}
+																	className="clear-btn"
 																	onClick={() => {
 																		settingsStore.selectedFormats = [];
 																		settingsStore.notify();
@@ -986,31 +985,31 @@ export function FileList({ onSelectionChange }: FileListProps) {
 													)}
 													{config.filterable === 'tags' && activePopover === 'tags' && (
 														<div
-															className={styles.popover}
+															className="filter-popover"
 															onClick={(e) => e.stopPropagation()}
 															onKeyDown={(e) => e.stopPropagation()}
 															role="presentation"
 														>
-															<div className={styles.popoverHeader}>Filter Tags</div>
-															<div className={styles.popoverList}>
+															<div className="filter-popover-header">Filter Tags</div>
+															<div className="filter-popover-list">
 																{allTags.map((tag) => (
-																	<label key={tag} className={styles.popoverItem}>
-																		<div className={styles.customCheckbox}>
+																	<label key={tag} className="filter-popover-item">
+																		<div className="checkbox">
 																			<input
 																				type="checkbox"
 																				checked={selectedTags.includes(tag)}
 																				onChange={() => toggleTagFilter(tag)}
 																			/>
-																			<span className={styles.checkmark} />
+																			<span className="checkbox-mark" />
 																		</div>
-																		<span className={styles.itemLabel}>{tag}</span>
+																		<span className="item-label">{tag}</span>
 																	</label>
 																))}
 															</div>
 															{selectedTags.length > 0 && (
 																<button
 																	type="button"
-																	className={styles.clearBtn}
+																	className="clear-btn"
 																	onClick={() => {
 																		settingsStore.selectedTags = [];
 																		settingsStore.notify();

@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { contextMenuState, hideContextMenu } from '@/lib/context-menu';
 import { useStoreVersion, useContextMenuVersion } from '@/lib/store-sync';
-import styles from './ContextMenu.module.css';
 
 export default function ContextMenu() {
 	const menuRef = useRef<HTMLDivElement>(null);
@@ -50,15 +49,15 @@ export default function ContextMenu() {
 	}
 
 	return (
-		<div ref={menuRef} className={styles.contextMenu} style={{ left: pos.x, top: pos.y }}>
+		<div ref={menuRef} className="context-menu" style={{ left: pos.x, top: pos.y }}>
 			{contextMenuState.items.map((item, i) =>
 				item.separator ? (
-					<div key={`sep-${i}`} className={styles.separator} />
+					<div key={`sep-${i}`} className="menu-separator" />
 				) : (
 					<button
 						key={item.label ?? i}
 						type="button"
-						className={styles.menuItem}
+						className="menu-item"
 						disabled={item.disabled}
 						onClick={() => handleAction(item.action)}
 					>

@@ -4,22 +4,21 @@ import { settingsStore } from '@/lib/settings-store';
 import { useStoreVersion, useSettingsVersion } from '@/lib/store-sync';
 import { TitlebarVisualizer } from '@/components/TitlebarVisualizer';
 import version from '../../package.json';
-import styles from './SettingsPage.module.css';
 
 export default function SettingsPage() {
 	useStoreVersion(useSettingsVersion);
 
 	return (
-		<div className={styles.settingsPage}>
+		<div className="settings-page settings">
 			<h1>Settings</h1>
 
-			<div className={styles.settingsContainer}>
-				<section className={styles.settingsSection}>
+			<div className="settings-container">
+				<section className="settings-section">
 					<h2>Interface</h2>
 
-					<div className={styles.settingItem}>
+					<div className="setting-item">
 						<label htmlFor="theme">Color Theme</label>
-						<div className={styles.selectWrapper}>
+						<div className="select-wrapper">
 							<select
 								id="theme"
 								value={settingsStore.theme}
@@ -33,14 +32,14 @@ export default function SettingsPage() {
 								<option value="light">Light</option>
 							</select>
 						</div>
-						<p className={styles.description}>
+						<p className="description">
 							Select the theme that Sonixy will use for the interface.
 						</p>
 					</div>
 
-					<div className={styles.settingItem}>
-						<div className={styles.checkboxSetting}>
-							<label className={styles.customCheckbox}>
+					<div className="setting-item">
+						<div className="checkbox-setting">
+							<label className="checkbox">
 								<input
 									type="checkbox"
 									id="showCheckboxes"
@@ -50,20 +49,20 @@ export default function SettingsPage() {
 										settingsStore.notify();
 									}}
 								/>
-								<span className={styles.checkmark} />
+								<span className="checkbox-mark" />
 							</label>
-							<label htmlFor="showCheckboxes" className={styles.checkboxLabel}>
+							<label htmlFor="showCheckboxes" className="checkbox-label">
 								Show Selection Checkboxes
 							</label>
 						</div>
-						<p className={styles.description}>
+						<p className="description">
 							Show or hide the selection checkboxes in the file list.
 						</p>
 					</div>
 
-					<div className={styles.settingItem}>
+					<div className="setting-item">
 						<label htmlFor="titlebarStyle">Titlebar style</label>
-						<div className={styles.selectWrapper}>
+						<div className="select-wrapper">
 							<select
 								id="titlebarStyle"
 								value={settingsStore.titlebarStyle}
@@ -78,18 +77,18 @@ export default function SettingsPage() {
 								<option value="linux">Linux</option>
 							</select>
 						</div>
-						<p className={styles.description}>
+						<p className="description">
 							Controls window buttons and the default layout preset. Auto uses macOS traffic lights
 							on Mac, Windows controls on Windows, and GNOME-style header buttons on Linux.
 						</p>
 					</div>
 
-					<div className={styles.settingItem}>
+					<div className="setting-item">
 						<h3>Titlebar Layout</h3>
 						<TitlebarVisualizer settings={settingsStore} />
 						<button
 							type="button"
-							className={styles.resetBtn}
+							className="reset-btn"
 							onClick={() => {
 								settingsStore.titlebarLayout = getDefaultTitlebarLayout({
 									styleSetting: settingsStore.titlebarStyle
@@ -99,17 +98,17 @@ export default function SettingsPage() {
 						>
 							Reset Titlebar Layout
 						</button>
-						<p className={styles.description}>
+						<p className="description">
 							Drag and drop elements to customize the titlebar layout. Window controls are always
 							pinned (left on macOS, right on Windows and Linux) and are not movable.
 						</p>
 					</div>
 
-					<div className={styles.settingItem}>
+					<div className="setting-item">
 						<h3>Column Order</h3>
 						<button
 							type="button"
-							className={styles.resetBtn}
+							className="reset-btn"
 							onClick={() => {
 								settingsStore.columnOrder = ['filename', 'format', 'length', 'size', 'tags'];
 								settingsStore.notify();
@@ -117,16 +116,16 @@ export default function SettingsPage() {
 						>
 							Reset Column Order
 						</button>
-						<p className={styles.description}>
+						<p className="description">
 							Reset the file list columns to their default order.
 						</p>
 					</div>
 				</section>
 
-				<section className={styles.settingsSection}>
+				<section className="settings-section">
 					<h2>Playback</h2>
 
-					<div className={styles.settingItem}>
+					<div className="setting-item">
 						<label htmlFor="playbackDelay">Replay delay (ms)</label>
 						<input
 							type="range"
@@ -140,16 +139,16 @@ export default function SettingsPage() {
 								settingsStore.notify();
 							}}
 						/>
-						<div className={styles.rangeValue}>{settingsStore.playbackDelay}ms</div>
-						<p className={styles.description}>
+						<div className="range-value">{settingsStore.playbackDelay}ms</div>
+						<p className="description">
 							Pause before replaying clips shorter than 2 seconds. Longer clips replay immediately
 							when they end.
 						</p>
 					</div>
 
-					<div className={styles.settingItem}>
+					<div className="setting-item">
 						<h3>Keyboard shortcuts</h3>
-						<ul className={styles.shortcutList}>
+						<ul className="shortcut-list">
 							<li>
 								<kbd>Space</kbd> Play / pause
 							</li>
@@ -166,25 +165,25 @@ export default function SettingsPage() {
 					</div>
 				</section>
 
-				<section className={styles.settingsSection}>
+				<section className="settings-section">
 					<h2>Collection</h2>
 
 					{settingsStore.recentCollections.length > 0 && (
-						<div className={styles.settingItem}>
+						<div className="setting-item">
 							<h3>Recent libraries</h3>
-							<ul className={styles.recentList}>
+							<ul className="recent-list">
 								{settingsStore.recentCollections.map((path) => (
-									<li key={path} className={styles.recentListItem}>
+									<li key={path} className="recent-list-item">
 										<button
 											type="button"
-											className={styles.recentOpenBtn}
+											className="recent-open-btn"
 											onClick={() => collectionStore.openCollectionByPath(path)}
 										>
 											{path}
 										</button>
 										<button
 											type="button"
-											className={styles.recentRemoveBtn}
+											className="recent-remove-btn"
 											aria-label="Remove from recent"
 											onClick={() => settingsStore.removeRecentCollection(path)}
 										>
@@ -196,9 +195,9 @@ export default function SettingsPage() {
 						</div>
 					)}
 
-					<div className={styles.settingItem}>
-						<div className={styles.checkboxSetting}>
-							<label className={styles.customCheckbox}>
+					<div className="setting-item">
+						<div className="checkbox-setting">
+							<label className="checkbox">
 								<input
 									type="checkbox"
 									id="normalizeOnImport"
@@ -208,13 +207,13 @@ export default function SettingsPage() {
 										settingsStore.notify();
 									}}
 								/>
-								<span className={styles.checkmark} />
+								<span className="checkbox-mark" />
 							</label>
-							<label htmlFor="normalizeOnImport" className={styles.checkboxLabel}>
+							<label htmlFor="normalizeOnImport" className="checkbox-label">
 								Normalize on Import
 							</label>
 						</div>
-						<p className={styles.description}>
+						<p className="description">
 							Actually process and normalize audio files to target a consistent volume level (EBU
 							R128).{' '}
 							<strong>
@@ -223,23 +222,23 @@ export default function SettingsPage() {
 						</p>
 					</div>
 
-					<div className={styles.settingItem}>
+					<div className="setting-item">
 						<h3>Waveforms</h3>
 						<button
 							type="button"
-							className={styles.resetBtn}
+							className="reset-btn"
 							onClick={() => collectionStore.regenerateWaveforms()}
 						>
 							Re-generate All Waveforms
 						</button>
-						<p className={styles.description}>
+						<p className="description">
 							Clears and re-processes all waveforms in the current collection. Useful if waveforms
 							appear corrupted or missing.
 						</p>
 					</div>
 				</section>
 
-				<section className={styles.settingsSection}>
+				<section className="settings-section">
 					<h2>About</h2>
 					<p>Sonixy v{version.version}</p>
 				</section>

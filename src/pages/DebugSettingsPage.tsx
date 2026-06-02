@@ -13,7 +13,6 @@ import {
 	useAudioVersion,
 	useDebugAccessVersion
 } from '@/lib/store-sync';
-import styles from './DebugSettingsPage.module.css';
 
 export default function DebugSettingsPage() {
 	const navigate = useNavigate();
@@ -39,13 +38,13 @@ export default function DebugSettingsPage() {
 	if (!canAccess) return null;
 
 	return (
-		<div className={styles.settingsPage}>
+		<div className="settings-page settings">
 			<h1>Debug</h1>
 
-			<div className={styles.settingsContainer}>
-				<section className={styles.settingsSection}>
+			<div className="settings-container">
+				<section className="settings-section">
 					<h2>Environment</h2>
-					<dl className={styles.debugDl}>
+					<dl className="debug-dl">
 						<div>
 							<dt>Mode</dt>
 							<dd>{isDev ? 'Development' : 'Production'}</dd>
@@ -57,12 +56,12 @@ export default function DebugSettingsPage() {
 					</dl>
 				</section>
 
-				<section className={styles.settingsSection}>
+				<section className="settings-section">
 					<h2>Collection</h2>
-					<dl className={styles.debugDl}>
+					<dl className="debug-dl">
 						<div>
 							<dt>Path</dt>
-							<dd className={styles.mono}>{collectionStore.collectionPath ?? '—'}</dd>
+							<dd className="mono">{collectionStore.collectionPath ?? '—'}</dd>
 						</div>
 						<div>
 							<dt>Files</dt>
@@ -83,19 +82,19 @@ export default function DebugSettingsPage() {
 					</dl>
 					<button
 						type="button"
-						className={styles.resetBtn}
+						className="reset-btn"
 						onClick={() => collectionStore.refresh()}
 					>
 						Rescan collection
 					</button>
 				</section>
 
-				<section className={styles.settingsSection}>
+				<section className="settings-section">
 					<h2>Playback</h2>
-					<dl className={styles.debugDl}>
+					<dl className="debug-dl">
 						<div>
 							<dt>Current file</dt>
-							<dd className={styles.mono}>{audioPlayer.currentFileId ?? '—'}</dd>
+							<dd className="mono">{audioPlayer.currentFileId ?? '—'}</dd>
 						</div>
 						<div>
 							<dt>Playing</dt>
@@ -108,19 +107,19 @@ export default function DebugSettingsPage() {
 					</dl>
 				</section>
 
-				<section className={styles.settingsSection}>
+				<section className="settings-section">
 					<h2>Storage</h2>
 					<button
 						type="button"
-						className={`${styles.resetBtn} ${styles.danger}`}
+						className="reset-btn danger"
 						onClick={clearLocalSettings}
 					>
 						Clear localStorage &amp; reload
 					</button>
-					<p className={styles.description}>
+					<p className="description">
 						Removes saved settings and last collection path, then reloads the app.
 					</p>
-					<details className={styles.settingsDump}>
+					<details className="settings-dump">
 						<summary>Current settings JSON</summary>
 						<pre>
 							{JSON.stringify(

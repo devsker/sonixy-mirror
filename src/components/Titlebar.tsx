@@ -36,7 +36,6 @@ import {
 } from '@/lib/store-sync';
 import { MacTrafficLights } from './MacTrafficLights';
 import { LinuxWindowControls } from './LinuxWindowControls';
-import styles from './Titlebar.module.css';
 
 const appWindow = getCurrentWindow();
 
@@ -122,37 +121,20 @@ export function Titlebar() {
 	}, []);
 
 	const windowControls = (
-		<div
-			className={`${styles.windowControls} ${showMacTrafficLights ? styles.windowControlsMacos : ''} ${showLinuxWindowControls ? styles.windowControlsLinux : ''}`}
-		>
+		<div className="window-controls">
 			{showMacTrafficLights ? (
 				<MacTrafficLights onClose={close} onMinimize={minimize} onZoom={toggleMaximize} />
 			) : showLinuxWindowControls ? (
 				<LinuxWindowControls onClose={close} onMinimize={minimize} onZoom={toggleMaximize} />
 			) : (
 				<>
-					<button
-						type="button"
-						className={styles.controlBtn}
-						onClick={minimize}
-						aria-label="Minimize"
-					>
+					<button type="button" className="control-btn" onClick={minimize} aria-label="Minimize">
 						<Minus size={14} />
 					</button>
-					<button
-						type="button"
-						className={styles.controlBtn}
-						onClick={toggleMaximize}
-						aria-label="Maximize"
-					>
+					<button type="button" className="control-btn" onClick={toggleMaximize} aria-label="Maximize">
 						<Square size={12} />
 					</button>
-					<button
-						type="button"
-						className={`${styles.controlBtn} ${styles.closeBtn}`}
-						onClick={close}
-						aria-label="Close"
-					>
+					<button type="button" className="control-btn close-btn" onClick={close} aria-label="Close">
 						<X size={14} />
 					</button>
 				</>
@@ -166,14 +148,12 @@ export function Titlebar() {
 				<div
 					key={id}
 					data-tauri-drag-region
-					className={styles.titleContainer}
+					className="title-container"
 					title={collectionPath ?? undefined}
 				>
-					<span className={`${styles.title} ${collectionPath ? styles.titleHasCollection : ''}`}>
+					<span className={`title${collectionPath ? ' title-has-collection' : ''}`}>
 						{collectionPath ? (
-							<span
-								className={`${styles.collectionName} ${showSwitchingUi ? styles.collectionNameLoading : ''}`}
-							>
+							<span className={`collection-name${showSwitchingUi ? ' collection-name-loading' : ''}`}>
 								{collectionName}
 							</span>
 						) : (
@@ -188,7 +168,7 @@ export function Titlebar() {
 				<button
 					key={id}
 					type="button"
-					className={styles.folderBtn}
+					className="folder-btn"
 					onClick={() => collectionStore.openCollection()}
 					aria-label="Open Collection"
 				>
@@ -198,10 +178,10 @@ export function Titlebar() {
 		}
 		if (id === 'playback') {
 			return (
-				<div key={id} className={styles.playbackControls}>
+				<div key={id} className="playback-controls">
 					<button
 						type="button"
-						className={styles.playbackBtn}
+						className="playback-btn"
 						onClick={(e) => {
 							audioPlayer.previous();
 							blurButton(e);
@@ -212,7 +192,7 @@ export function Titlebar() {
 					</button>
 					<button
 						type="button"
-						className={`${styles.playbackBtn} ${styles.playPause}`}
+						className="playback-btn play-pause"
 						onClick={(e) => {
 							audioPlayer.toggle();
 							blurButton(e);
@@ -251,7 +231,7 @@ export function Titlebar() {
 					</button>
 					<button
 						type="button"
-						className={styles.playbackBtn}
+						className="playback-btn"
 						onClick={(e) => {
 							audioPlayer.next();
 							blurButton(e);
@@ -265,10 +245,10 @@ export function Titlebar() {
 		}
 		if (id === 'volume') {
 			return (
-				<div key={id} className={styles.volumeControl} onWheel={handleVolumeWheel}>
+				<div key={id} className="volume-control" onWheel={handleVolumeWheel}>
 					<button
 						type="button"
-						className={`${styles.playbackBtn} ${styles.volumeBtn}`}
+						className="playback-btn"
 						onClick={(e) => {
 							audioPlayer.toggleMute();
 							blurButton(e);
@@ -289,7 +269,7 @@ export function Titlebar() {
 						step="0.01"
 						value={volume}
 						onInput={(e) => audioPlayer.setVolume(parseFloat(e.currentTarget.value))}
-						className={styles.volumeSlider}
+						className="volume-slider"
 					/>
 				</div>
 			);
@@ -298,25 +278,25 @@ export function Titlebar() {
 			return (
 				<div
 					key={id}
-					className={styles.taskContainer}
+					className="task-container"
 					onClick={(e) => e.stopPropagation()}
 					onKeyDown={(e) => e.stopPropagation()}
 					role="presentation"
 				>
 					<button
 						type="button"
-						className={`${styles.controlBtn} ${styles.taskBtn} ${activeTasksCount > 0 ? styles.taskBtnActive : ''}`}
+						className={`control-btn task-btn${activeTasksCount > 0 ? ' task-btn-active' : ''}`}
 						onClick={toggleTasks}
 						aria-label="Tasks"
 					>
-						<div className={styles.taskBtnIcon}>
+						<div className="task-btn-icon">
 							<svg width="18" height="18" viewBox="0 0 18 18">
 								<circle
 									cx="9"
 									cy="9"
 									r="7"
 									fill="none"
-									stroke={processingPaused ? 'var(--warning-color, #eab308)' : 'currentColor'}
+									stroke={processingPaused ? 'var(--warning-color)' : 'currentColor'}
 									strokeWidth="2"
 									opacity="0.2"
 								/>
@@ -325,11 +305,7 @@ export function Titlebar() {
 									cy="9"
 									r="7"
 									fill="none"
-									stroke={
-										processingPaused
-											? 'var(--warning-color, #eab308)'
-											: 'var(--accent-color, #3b82f6)'
-									}
+									stroke={processingPaused ? 'var(--warning-color)' : 'var(--accent-color)'}
 									strokeWidth="2"
 									strokeDasharray="44"
 									strokeDashoffset={44 - (44 * overallProgress) / 100}
@@ -342,20 +318,20 @@ export function Titlebar() {
 									size={10}
 									fill="var(--text-muted)"
 									color="var(--text-muted)"
-									className={styles.taskPauseOverlay}
+									className="task-pause-overlay"
 								/>
 							)}
 						</div>
 					</button>
 
 					{showTasks && (
-						<div className={styles.tasksPopover}>
-							<div className={styles.popoverHeader}>
+						<div className="tasks-popover">
+							<div className="tasks-popover-header">
 								<span>Background Tasks</span>
 								{activeTasksCount > 0 && (
 									<button
 										type="button"
-										className={styles.pauseResumeBtn}
+										className="pause-resume-btn"
 										onClick={() =>
 											processingPaused
 												? collectionStore.resumeProcessing()
@@ -377,36 +353,36 @@ export function Titlebar() {
 									</button>
 								)}
 							</div>
-							<div className={styles.tasksList}>
+							<div className="tasks-list">
 								{tasks.length === 0 ? (
-									<div className={styles.noTasks}>No active tasks</div>
+									<div className="no-tasks">No active tasks</div>
 								) : (
 									tasks.map((task) => (
-										<div key={task.id} className={styles.taskItem}>
-											<div className={styles.taskInfo}>
-												<span className={styles.taskName}>{task.name}</span>
-												<div className={styles.taskStatus}>
+										<div key={task.id} className="task-item">
+											<div className="task-info">
+												<span className="task-name">{task.name}</span>
+												<div className="task-status">
 													{task.status === 'running' && (
-														<Loader2 size={12} className={styles.animateSpin} />
+														<Loader2 size={12} className="animate-spin" />
 													)}
 													{task.status === 'paused' && <Pause size={12} />}
 													{task.status === 'completed' && (
-														<CheckCircle2 size={12} color="var(--success-color, #22c55e)" />
+														<CheckCircle2 size={12} color="var(--success-color)" />
 													)}
 													{task.status === 'failed' && (
-														<AlertCircle size={12} color="var(--error-color, #ef4444)" />
+														<AlertCircle size={12} color="var(--error-color)" />
 													)}
 													<span>{Math.round(task.progress)}%</span>
 												</div>
 											</div>
-											<div className={styles.taskProgressBar}>
+											<div className="task-progress-bar">
 												<div
-													className={`${styles.progressFill} ${task.status === 'paused' ? styles.progressFillPaused : ''} ${task.status === 'completed' ? styles.progressFillCompleted : ''} ${task.status === 'failed' ? styles.progressFillFailed : ''}`}
+													className={`progress-fill${task.status === 'paused' ? ' progress-fill-paused' : ''}${task.status === 'completed' ? ' progress-fill-completed' : ''}${task.status === 'failed' ? ' progress-fill-failed' : ''}`}
 													style={{ width: `${task.progress}%` }}
 												/>
 											</div>
 											{task.message && (
-												<span className={styles.taskMessage}>
+												<span className="task-message">
 													{task.status === 'paused'
 														? task.message.replace(/ - .+remaining$/, '')
 														: task.message}
@@ -426,45 +402,41 @@ export function Titlebar() {
 				<button
 					key={id}
 					type="button"
-					className={styles.controlBtn}
+					className="control-btn"
 					onClick={() => collectionStore.refresh()}
 					aria-label="Refresh"
 					disabled={loading}
 				>
-					<RefreshCw size={14} className={loading ? styles.animateSpin : undefined} />
+					<RefreshCw size={14} className={loading ? 'animate-spin' : undefined} />
 				</button>
 			);
 		}
 		if (id === 'spacer') {
-			return <div key={id} data-tauri-drag-region className={styles.spacer} />;
+			return <div key={id} data-tauri-drag-region className="spacer" />;
 		}
 		return null;
 	};
 
 	return (
-		<div data-tauri-drag-region className={styles.titlebar}>
+		<div data-tauri-drag-region className="titlebar">
 			{pinWindowControlsLeft && (
-				<div className={`${styles.titlebarPinned} ${styles.titlebarPinnedLeft}`}>
-					{windowControls}
-				</div>
+				<div className="titlebar-pinned titlebar-pinned-left">{windowControls}</div>
 			)}
 
-			<div data-tauri-drag-region className={`${styles.titlebarSection} ${styles.titlebarLeft}`}>
+			<div data-tauri-drag-region className="titlebar-section titlebar-left">
 				{sections.left.map((id) => renderElement(id))}
 			</div>
 
-			<div data-tauri-drag-region className={`${styles.titlebarSection} ${styles.titlebarCenter}`}>
+			<div data-tauri-drag-region className="titlebar-section titlebar-center">
 				{sections.center.map((id) => renderElement(id))}
 			</div>
 
-			<div data-tauri-drag-region className={`${styles.titlebarSection} ${styles.titlebarRight}`}>
+			<div data-tauri-drag-region className="titlebar-section titlebar-right">
 				{sections.right.map((id) => renderElement(id))}
 			</div>
 
 			{!pinWindowControlsLeft && (
-				<div className={`${styles.titlebarPinned} ${styles.titlebarPinnedRight}`}>
-					{windowControls}
-				</div>
+				<div className="titlebar-pinned titlebar-pinned-right">{windowControls}</div>
 			)}
 		</div>
 	);

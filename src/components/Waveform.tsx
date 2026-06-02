@@ -5,7 +5,6 @@ import { audioPlayer } from '@/lib/audio-player';
 import { collectionStore } from '@/lib/collection-store';
 import { useExternalFileDrag } from '@/lib/use-external-file-drag';
 import { useStoreVersion, useCollectionVersion, useAudioVersion } from '@/lib/store-sync';
-import styles from './Waveform.module.css';
 
 type Props = {
 	height?: number | string;
@@ -216,7 +215,7 @@ export default function Waveform({
 
 	return (
 		<div
-			className={styles.waveformContainer}
+			className="waveform-container"
 			style={{ height: heightStyle }}
 			onMouseMove={onMouseMove}
 			onMouseUp={onMouseUp}
@@ -229,7 +228,7 @@ export default function Waveform({
 				ref={svgRef}
 				viewBox={`0 0 ${barsCount * 3} 100`}
 				preserveAspectRatio="none"
-				className={`${styles.waveformSvg} ${!waveformData && !isLoading ? styles.hidden : ''} ${isLocked ? styles.locked : ''}`}
+				className={`waveform-svg${!waveformData && !isLoading ? ' hidden' : ''}${isLocked ? ' locked' : ''}`}
 				onMouseDown={onMouseDown}
 				role="presentation"
 			>
@@ -266,19 +265,19 @@ export default function Waveform({
 					/>
 				)}
 
-				<g className={styles.waveformBase}>
+				<g>
 					<path
 						d={waveformPath}
 						fill={`url(#waveformGradient-${id})`}
-						className={`${styles.waveformPath} ${!waveformData && isLoading ? styles.noTransition : ''}`}
+						className={`waveform-path${!waveformData && isLoading ? ' no-transition' : ''}`}
 					/>
 				</g>
 
-				<g className={styles.waveformPlayed} clipPath={`url(#progressClip-${id})`}>
+				<g clipPath={`url(#progressClip-${id})`}>
 					<path
 						d={waveformPath}
 						fill={`url(#waveformPlayedGradient-${id})`}
-						className={`${styles.waveformPath} ${styles.played} ${!waveformData && isLoading ? styles.noTransition : ''}`}
+						className={`waveform-path played${!waveformData && isLoading ? ' no-transition' : ''}`}
 					/>
 				</g>
 
@@ -291,7 +290,7 @@ export default function Waveform({
 						stroke="var(--accent-color)"
 						strokeWidth="1.5"
 						pointerEvents="none"
-						className={styles.hoverLine}
+						className="hover-line"
 					/>
 				)}
 
@@ -307,7 +306,7 @@ export default function Waveform({
 						strokeOpacity="0.8"
 						strokeWidth="1"
 						onMouseDown={(e) => e.stopPropagation()}
-						className={`${styles.selectionRect} selection-rect ${dragClipPath ? styles.ready : ''} ${isPreparingClip ? styles.preparing : ''}`}
+						className={`selection-rect${dragClipPath ? ' ready' : ''}${isPreparingClip ? ' preparing' : ''}`}
 					/>
 				)}
 			</svg>

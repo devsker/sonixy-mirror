@@ -15,7 +15,6 @@ import {
 	useSettingsVersion,
 	useDebugAccessVersion
 } from '@/lib/store-sync';
-import styles from './Sidebar.module.css';
 
 export default function Sidebar() {
 	useStoreVersion(useCollectionVersion);
@@ -93,13 +92,13 @@ export default function Sidebar() {
 	}
 
 	return (
-		<aside className={styles.sidebar}>
-			<header className={styles.sidebarHeader}>
-				<h2 className={styles.sidebarTitle}>Library</h2>
-				<div className={styles.headerActions}>
+		<aside className="sidebar">
+			<header className="sidebar-header">
+				<h2 className="sidebar-title">Library</h2>
+				<div className="header-actions">
 					<button
 						type="button"
-						className={styles.addBtn}
+						className="add-btn"
 						onClick={importLibrary}
 						title="Import library"
 						aria-label="Import library"
@@ -109,7 +108,7 @@ export default function Sidebar() {
 					</button>
 					<button
 						type="button"
-						className={styles.addBtn}
+						className="add-btn"
 						onClick={addLibrary}
 						title="Add library"
 						aria-label="Add library"
@@ -120,13 +119,13 @@ export default function Sidebar() {
 				</div>
 			</header>
 
-			<nav className={styles.sidebarNav} aria-label="Collections">
+			<nav className="sidebar-nav" aria-label="Collections">
 				{collections.length === 0 ? (
-					<div className={styles.sidebarEmpty}>
+					<div className="sidebar-empty">
 						<p>No libraries yet. Use Add to open a folder.</p>
 					</div>
 				) : (
-					<ul className={styles.collectionList}>
+					<ul className="collection-list">
 						{collections.map((collectionPath) => {
 							const isActive =
 								isLibraryView &&
@@ -140,7 +139,7 @@ export default function Sidebar() {
 								<li key={collectionPath}>
 									<button
 										type="button"
-										className={`${styles.collectionItem} ${isActive ? styles.active : ''} ${isLoading ? styles.loading : ''}`}
+										className={`collection-item${isActive ? ' active' : ''}${isLoading ? ' loading' : ''}`}
 										title={collectionPath}
 										disabled={collectionStore.switchingCollection}
 										onClick={() => switchCollection(collectionPath)}
@@ -148,18 +147,18 @@ export default function Sidebar() {
 											onCollectionContextMenu(e, collectionPath, isActive)
 										}
 									>
-										<span className={styles.collectionIcon} aria-hidden="true">
+										<span className="collection-icon" aria-hidden="true">
 											{isLoading ? (
 												<Loader2 size={16} className="animate-spin" />
 											) : (
 												<Folder size={16} />
 											)}
 										</span>
-										<span className={styles.collectionLabel}>
+										<span className="collection-label">
 											{collectionDisplayName(collectionPath)}
 										</span>
 										{fileCount !== null && (
-											<span className={styles.collectionCount}>{fileCount}</span>
+											<span className="collection-count">{fileCount}</span>
 										)}
 									</button>
 								</li>
@@ -169,11 +168,11 @@ export default function Sidebar() {
 				)}
 			</nav>
 
-			<footer className={styles.sidebarFooter}>
+			<footer className="sidebar-footer">
 				{showDebugSettings && (
 					<Link
 						to="/debug-settings"
-						className={`${styles.footerLink} ${isDebugSettingsView ? styles.active : ''}`}
+						className={`footer-link${isDebugSettingsView ? ' active' : ''}`}
 						title="Debug"
 						draggable={false}
 					>
@@ -183,7 +182,7 @@ export default function Sidebar() {
 				)}
 				<Link
 					to="/settings"
-					className={`${styles.footerLink} ${isSettingsView ? styles.active : ''}`}
+					className={`footer-link${isSettingsView ? ' active' : ''}`}
 					title="Settings"
 					draggable={false}
 					onClick={onSettingsClick}
