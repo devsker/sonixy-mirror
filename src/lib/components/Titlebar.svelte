@@ -454,8 +454,6 @@
 		font-size: 11px;
 		font-weight: 500;
 		color: var(--text-muted);
-		letter-spacing: 0.05em;
-		text-transform: uppercase;
 		cursor: default;
 		white-space: nowrap;
 		overflow: hidden;
@@ -465,7 +463,6 @@
 
 	.title.has-collection {
 		text-transform: none;
-		letter-spacing: normal;
 	}
 
 	.collection-name {

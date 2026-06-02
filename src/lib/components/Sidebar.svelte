@@ -158,8 +158,6 @@
 		margin: 0;
 		font-size: 11px;
 		font-weight: 600;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
 		color: var(--text-muted);
 	}
 
@@ -174,7 +172,6 @@
 		color: var(--text-color);
 		font-size: 11px;
 		font-weight: 600;
-		letter-spacing: 0.02em;
 		cursor: pointer;
 		flex-shrink: 0;
 	}

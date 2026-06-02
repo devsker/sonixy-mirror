@@ -396,8 +396,6 @@
 		font-size: 11px;
 		font-weight: 500;
 		color: var(--text-muted);
-		letter-spacing: 0.05em;
-		text-transform: uppercase;
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -635,7 +633,6 @@
         font-weight: 600;
         color: var(--text-muted);
         text-transform: uppercase;
-        letter-spacing: 0.02em;
         margin-right: 4px;
     }
 

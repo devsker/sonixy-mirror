@@ -1199,8 +1199,6 @@
 		font-weight: 700;
 		color: var(--text-muted);
 		padding: 8px 10px;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
 	}
 
 	.popover-list {
