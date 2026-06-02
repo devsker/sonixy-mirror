@@ -1,0 +1,364 @@
+.visualizer {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	margin-bottom: 8px;
+	user-select: none;
+	width: 100%;
+	max-width: 800px;
+}
+
+.titlebarMock {
+	height: 30px;
+	width: 100%;
+	background: var(--sidebar-bg);
+	display: flex !important;
+	flex-direction: row !important;
+	flex-wrap: nowrap !important;
+	justify-content: space-between !important;
+	align-items: center !important;
+	border: 1px solid var(--border-color);
+	border-radius: 4px;
+	box-sizing: border-box;
+	position: relative;
+	overflow: visible;
+	cursor: default;
+}
+
+.titlebarSection {
+	display: flex !important;
+	flex-direction: row !important;
+	align-items: center !important;
+	height: 100% !important;
+	min-width: 20px;
+	flex-wrap: nowrap !important;
+}
+
+.titlebarLeft {
+	flex: 1;
+	justify-content: flex-start;
+}
+
+.titlebarCenter {
+	flex: 0 1 auto;
+	justify-content: center;
+}
+
+.titlebarRight {
+	flex: 1;
+	justify-content: flex-end;
+}
+
+.spacer {
+	width: 24px;
+	height: 100%;
+	position: relative;
+}
+
+.spacerHandle {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	opacity: 0.2;
+	color: var(--text-muted);
+}
+
+.titleContainer {
+	display: flex;
+	align-items: center;
+	height: 100%;
+	min-width: 0;
+	padding: 0 12px;
+}
+
+.title {
+	font-size: 11px;
+	font-weight: 500;
+	color: var(--text-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.folderBtn {
+	display: inline-flex;
+	justify-content: center;
+	align-items: center;
+	width: 28px;
+	height: 28px;
+	border: none;
+	background: transparent;
+	color: var(--icon-color);
+	border-radius: 4px;
+}
+
+.playbackControls {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 0 16px;
+	height: 100%;
+}
+
+.playbackBtn {
+	display: inline-flex;
+	justify-content: center;
+	align-items: center;
+	width: 28px;
+	height: 28px;
+	border: none;
+	background: transparent;
+	color: var(--icon-color);
+	border-radius: 4px;
+}
+
+.playPause {
+	color: var(--text-main);
+}
+
+.volumeControl {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 0 12px;
+	height: 100%;
+}
+
+.volumeSliderMock {
+	width: 60px;
+	height: 3px;
+	background: rgba(0, 0, 0, 0.1);
+	border-radius: 2px;
+	position: relative;
+}
+
+:global(html.dark) .volumeSliderMock {
+	background: rgba(255, 255, 255, 0.1);
+}
+
+.volumeSliderMock::after {
+	content: '';
+	position: absolute;
+	left: 30%;
+	top: 50%;
+	transform: translate(-50%, -50%);
+	width: 8px;
+	height: 8px;
+	background: var(--text-muted);
+	border-radius: 50%;
+}
+
+.windowControls {
+	display: flex;
+	height: 100%;
+}
+
+.titlebarPinned {
+	display: flex;
+	align-items: center;
+	height: 100%;
+	flex-shrink: 0;
+}
+
+.titlebarPinnedRight {
+	margin-left: auto;
+}
+
+.windowControlsMacos,
+.windowControlsLinux {
+	display: flex;
+	height: 100%;
+}
+
+.taskContainer {
+	display: flex;
+	height: 100%;
+}
+
+.taskBtn {
+	color: var(--text-muted);
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 0 8px;
+	background: transparent;
+	border: none;
+}
+
+.controlBtn {
+	display: inline-flex;
+	justify-content: center;
+	align-items: center;
+	width: 45px;
+	height: 100%;
+	border: none;
+	background: transparent;
+	color: var(--icon-color);
+	box-sizing: border-box;
+}
+
+.closeBtn {
+	color: var(--icon-color);
+}
+
+.droppableSection {
+	transition: background-color 0.2s;
+	border: 1px transparent dashed;
+}
+
+.droppableSectionDragOver {
+	background: rgba(var(--accent-color-rgb, 59, 130, 246), 0.1) !important;
+	border-color: var(--accent-color, #3b82f6) !important;
+}
+
+.elementWrapper {
+	display: flex !important;
+	flex-direction: row !important;
+	align-items: center !important;
+	height: 100%;
+	position: relative;
+	cursor: grab;
+}
+
+.elementWrapper:active {
+	cursor: grabbing;
+}
+
+.draggableElement {
+	pointer-events: none;
+}
+
+.elementWrapper:hover {
+	background: rgba(0, 0, 0, 0.05);
+}
+
+:global(html.dark) .elementWrapper:hover {
+	background: rgba(255, 255, 255, 0.05);
+}
+
+.dropTarget::before {
+	content: '';
+	position: absolute;
+	left: -1px;
+	top: 0;
+	bottom: 0;
+	width: 3px;
+	background: var(--accent-color, #3b82f6);
+	z-index: 200;
+	box-shadow: 0 0 8px var(--accent-color, #3b82f6);
+}
+
+.removeBtn {
+	position: absolute;
+	top: -4px;
+	right: -4px;
+	width: 14px;
+	height: 14px;
+	background: #ef4444;
+	color: white;
+	border: none;
+	border-radius: 50%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+	opacity: 0;
+	transition: opacity 0.2s;
+	z-index: 30;
+	padding: 0;
+	font-size: 8px;
+}
+
+.elementWrapper:hover .removeBtn {
+	opacity: 1;
+}
+
+.emptyPlaceholder {
+	font-size: 8px;
+	color: var(--text-muted);
+	opacity: 0.3;
+	padding: 0 4px;
+	font-style: italic;
+}
+
+.poolContainer {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-top: 4px;
+}
+
+.elementPool {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 10px;
+	background: rgba(0, 0, 0, 0.02);
+	border: 1px solid var(--border-color);
+	border-radius: 6px;
+	min-height: 36px;
+	transition:
+		background-color 0.2s,
+		border-color 0.2s;
+}
+
+:global(html.dark) .elementPool {
+	background: rgba(255, 255, 255, 0.02);
+}
+
+.poolLabel {
+	font-size: 10px;
+	font-weight: 600;
+	color: var(--text-muted);
+	text-transform: uppercase;
+	margin-right: 4px;
+}
+
+.poolItem {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	background: var(--sidebar-bg);
+	border: 1px solid var(--border-color);
+	border-radius: 4px;
+	cursor: grab;
+	transition:
+		transform 0.1s,
+		border-color 0.2s,
+		background-color 0.2s;
+	color: var(--icon-color);
+}
+
+.poolItem:hover {
+	border-color: var(--icon-active);
+	background-color: rgba(var(--accent-color-rgb, 59, 130, 246), 0.05);
+	color: var(--icon-active);
+}
+
+.poolTextIcon {
+	font-size: 10px;
+	font-weight: 700;
+}
+
+.elementPoolDragOver {
+	background: rgba(239, 68, 68, 0.05);
+	border-color: #ef4444;
+	border-style: dashed;
+}
+
+.circleMock {
+	width: 12px;
+	height: 12px;
+	border: 2px solid currentColor;
+	border-radius: 50%;
+}
+
+.emptyPool {
+	font-size: 11px;
+	color: var(--text-muted);
+	font-style: italic;
+}

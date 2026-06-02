@@ -1,0 +1,89 @@
+.settingsPage {
+	padding: 24px;
+	height: 100%;
+	overflow-y: auto;
+	box-sizing: border-box;
+}
+
+.settingsContainer {
+	display: flex;
+	flex-direction: column;
+	gap: 32px;
+	width: 100%;
+}
+
+.settingsSection h2 {
+	border-bottom: 1px solid var(--border-color, #333);
+	padding-bottom: 8px;
+	margin-bottom: 16px;
+	font-size: 1.2rem;
+	font-weight: 600;
+	color: var(--text-muted, #ccc);
+}
+
+.debugDl {
+	margin: 0 0 16px;
+	display: grid;
+	gap: 10px;
+}
+
+.debugDl div {
+	display: grid;
+	grid-template-columns: 140px 1fr;
+	gap: 12px;
+	align-items: baseline;
+	font-size: 0.9rem;
+}
+
+.debugDl dt {
+	color: var(--text-muted);
+	margin: 0;
+}
+
+.debugDl dd {
+	margin: 0;
+	color: var(--text-color);
+}
+
+.mono {
+	font-family: ui-monospace, monospace;
+	font-size: 0.8rem;
+	word-break: break-all;
+}
+
+.resetBtn {
+	background-color: var(--sidebar-bg);
+	color: var(--text-color);
+	border: 1px solid var(--border-color);
+	padding: 8px 16px;
+	border-radius: 4px;
+	font-size: 0.9rem;
+	cursor: pointer;
+	width: fit-content;
+}
+
+.resetBtn.danger {
+	border-color: #ef4444;
+	color: #ef4444;
+}
+
+.description {
+	font-size: 0.85rem;
+	color: var(--text-muted, #888);
+	margin-top: 8px;
+}
+
+.settingsDump {
+	margin-top: 16px;
+	font-size: 0.85rem;
+}
+
+.settingsDump pre {
+	margin-top: 8px;
+	padding: 12px;
+	background: var(--sidebar-bg);
+	border: 1px solid var(--border-color);
+	border-radius: 4px;
+	overflow-x: auto;
+	font-size: 0.75rem;
+}

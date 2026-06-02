@@ -8,7 +8,7 @@
   <img src="static/screenshot.png" alt="Sonixy Screenshot" width="800">
 </p>
 
-Sonixy is a high-performance desktop application designed for audio enthusiasts and creators who need a fast, reliable way to manage and audition their audio collections. Built with **Tauri**, **Svelte 5**, and **Rust**, it combines the speed of native code with a refined, modern user interface.
+Sonixy is a high-performance desktop application designed for audio enthusiasts and creators who need a fast, reliable way to manage and audition their audio collections. Built with **Tauri**, **React**, **Vite**, and **Rust**, it combines the speed of native code with a refined, modern user interface.
 
 ## Getting Started
 
@@ -24,12 +24,14 @@ To run or build Sonixy, you'll need the following installed:
 ### Installation
 
 1. **Clone the repository**:
+
    ```bash
    git clone https://codeberg.org/sker/sonixy.git
    cd sonixy
    ```
 
 2. **Install dependencies**:
+
    ```bash
    pnpm install
    ```
@@ -43,8 +45,9 @@ To run or build Sonixy, you'll need the following installed:
 
 ### Available Scripts
 
-- `pnpm dev`: Starts the Vite development server.
-- `pnpm build`: Builds the frontend for production.
+- `pnpm dev`: Starts the Vite dev server (frontend only).
+- `pnpm build`: Type-checks and builds the frontend for production.
+- `pnpm check`: Runs TypeScript without emitting.
 - `pnpm tauri dev`: Starts the Tauri app in development mode.
 - `pnpm tauri build`: Builds the production-ready desktop application.
 - `pnpm lint`: Runs ESLint, Prettier, and Cargo Clippy checks.
