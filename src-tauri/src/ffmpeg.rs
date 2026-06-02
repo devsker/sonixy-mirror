@@ -27,6 +27,7 @@ struct PlatformArtifact {
 
 enum ArchiveKind {
     Zip,
+    #[cfg(target_os = "linux")]
     TarXz,
 }
 
@@ -188,6 +189,7 @@ fn extract_archive(archive: &Path, dest: &Path, kind: &ArchiveKind) -> Result<()
             let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
             archive.extract(dest).map_err(|e| e.to_string())?;
         }
+        #[cfg(target_os = "linux")]
         ArchiveKind::TarXz => {
             let file = std::fs::File::open(archive).map_err(|e| e.to_string())?;
             let decompressor = xz2::read::XzDecoder::new(file);
