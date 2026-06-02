@@ -1,6 +1,7 @@
 import { startDrag } from '@crabnebula/tauri-plugin-drag';
 import { join, resolveResource, resourceDir } from '@tauri-apps/api/path';
-import { collectionStore } from '$lib/collection-store.svelte';
+import { audioPlayer } from '@/lib/audio-player';
+import { collectionStore } from '@/lib/collection-store';
 
 const DRAG_THRESHOLD_PX = 5;
 
@@ -34,10 +35,26 @@ async function getDragIcon(): Promise<string> {
 export async function startExternalFileDrag(paths: string[]): Promise<void> {
 	if (paths.length === 0) return;
 
-	const icon = await getDragIcon();
+	if (!dragIconPath) {
+		try {
+			await getDragIcon();
+		} catch (err) {
+			console.error('Failed to resolve drag icon:', err);
+			return;
+		}
+	}
+
+	// Playback keeps the event loop busy; pause so the drag gesture is not lost.
+	if (audioPlayer.isPlaying) {
+		audioPlayer.pause();
+	}
+
+	const icon = dragIconPath!;
 	collectionStore.isDraggingFromApp = true;
 	try {
 		await startDrag({ item: paths, icon });
+	} catch (err) {
+		console.error('Failed to start file drag:', err);
 	} finally {
 		collectionStore.isDraggingFromApp = false;
 	}
@@ -63,7 +80,8 @@ export function externalFileDrag(
 	let startX = 0;
 	let startY = 0;
 
-	const onMouseDown = (e: MouseEvent) => {
+	const onMouseDown = (e: Event) => {
+		if (!(e instanceof MouseEvent)) return;
 		if (e.button !== 0 || config.disabled?.()) return;
 		pointerDown = true;
 		dragStarted = false;
@@ -71,7 +89,8 @@ export function externalFileDrag(
 		startY = e.clientY;
 	};
 
-	const onMouseMove = (e: MouseEvent) => {
+	const onMouseMove = (e: Event) => {
+		if (!(e instanceof MouseEvent)) return;
 		if (!pointerDown || dragStarted) return;
 		const dx = e.clientX - startX;
 		const dy = e.clientY - startY;
