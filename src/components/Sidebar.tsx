@@ -1,4 +1,4 @@
-import { Bug, Folder, Loader2, Plus, Settings, Upload } from 'lucide-react';
+import { Bug, ChevronDown, Folder, Loader2, Plus, Settings } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { debugSettingsAccess } from '@/lib/debug-settings-access';
 import {
@@ -57,6 +57,14 @@ export default function Sidebar() {
 		await collectionStore.importLibrary();
 	}
 
+	function openLibraryActionsMenu(event: React.MouseEvent<HTMLButtonElement>) {
+		const rect = event.currentTarget.getBoundingClientRect();
+		showContextMenu(rect.left, rect.bottom + 4, [
+			{ label: 'Open folder…', action: () => void addLibrary() },
+			{ label: 'Import library…', action: () => void importLibrary() }
+		]);
+	}
+
 	function onCollectionContextMenu(
 		event: React.MouseEvent,
 		collectionPath: string,
@@ -94,35 +102,26 @@ export default function Sidebar() {
 	return (
 		<aside className="sidebar">
 			<header className="sidebar-header">
-				<h2 className="sidebar-title">Library</h2>
-				<div className="header-actions">
-					<button
-						type="button"
-						className="add-btn"
-						onClick={importLibrary}
-						title="Import library"
-						aria-label="Import library"
-					>
-						<Upload size={14} strokeWidth={2.5} />
-						<span>Import</span>
-					</button>
-					<button
-						type="button"
-						className="add-btn"
-						onClick={addLibrary}
-						title="Add library"
-						aria-label="Add library"
-					>
+				<button
+					type="button"
+					className="library-add-btn"
+					onClick={openLibraryActionsMenu}
+					title="Add library"
+					aria-label="Add library"
+					aria-haspopup="menu"
+				>
+					<span className="library-add-btn-label">
 						<Plus size={14} strokeWidth={2.5} />
-						<span>Add</span>
-					</button>
-				</div>
+						<span>Add library</span>
+					</span>
+					<ChevronDown size={14} strokeWidth={2.5} aria-hidden="true" />
+				</button>
 			</header>
 
 			<nav className="sidebar-nav" aria-label="Collections">
 				{collections.length === 0 ? (
 					<div className="sidebar-empty">
-						<p>No libraries yet. Use Add to open a folder.</p>
+						<p>No libraries yet. Use Add library to open a folder.</p>
 					</div>
 				) : (
 					<ul className="collection-list">

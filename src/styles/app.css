@@ -226,7 +226,7 @@ html:not(.no-transitions) .titlebar {
 	transition: all 0.1s;
 }
 
-.checkbox input:checked ~ .checkbox-mark {
+.checkbox input:checked~.checkbox-mark {
 	background: var(--accent);
 	border-color: var(--accent);
 }
@@ -244,11 +244,11 @@ html:not(.no-transitions) .titlebar {
 	transform: rotate(45deg);
 }
 
-.checkbox input:checked ~ .checkbox-mark::after {
+.checkbox input:checked~.checkbox-mark::after {
 	display: block;
 }
 
-html.dark .checkbox input:checked ~ .checkbox-mark::after {
+html.dark .checkbox input:checked~.checkbox-mark::after {
 	border-color: #1a1a1a;
 }
 
@@ -262,7 +262,7 @@ html.dark .checkbox input:checked ~ .checkbox-mark::after {
 	border-radius: 3px;
 }
 
-.settings .checkbox input:checked ~ .checkbox-mark::after {
+.settings .checkbox input:checked~.checkbox-mark::after {
 	left: 6px;
 	top: 2px;
 	width: 4px;
@@ -336,46 +336,45 @@ html.dark .checkbox input:checked ~ .checkbox-mark::after {
 
 .sidebar-header {
 	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 8px;
+	padding: 16px 12px 10px;
+	flex-shrink: 0;
+	border-bottom: 1px solid var(--border-subtle);
+}
+
+.library-add-btn {
+	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 6px;
-	padding: 16px 14px 12px;
-	flex-shrink: 0;
-}
-
-.header-actions {
-	display: flex;
-	align-items: center;
-	gap: 2px;
-	flex-shrink: 0;
-}
-
-.sidebar-title {
-	margin: 0;
-	font-size: 11px;
-	font-weight: 600;
-	letter-spacing: 0.04em;
-	text-transform: uppercase;
-	color: var(--text-tertiary);
-}
-
-.add-btn {
-	display: flex;
-	align-items: center;
-	gap: 4px;
-	padding: 4px 8px;
-	border: none;
-	border-radius: var(--radius-sm);
-	background: transparent;
+	gap: 8px;
+	width: 100%;
+	padding: 7px 10px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
 	color: var(--text);
-	font-size: 11px;
-	font-weight: 600;
+	font-size: 13px;
+	font-weight: 500;
 	cursor: pointer;
-	flex-shrink: 0;
+	transition: background-color 0.1s, border-color 0.1s;
 }
 
-.add-btn:hover:not(:disabled) {
+.library-add-btn:hover:not(:disabled) {
 	background: var(--hover-bg);
+	border-color: var(--border);
+}
+
+.library-add-btn:active:not(:disabled) {
+	background: var(--active-bg);
+}
+
+.library-add-btn-label {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
 }
 
 .sidebar-nav {
@@ -454,7 +453,7 @@ html.dark .checkbox input:checked ~ .checkbox-mark::after {
 
 .collection-item.active .collection-icon,
 .collection-item.loading .collection-icon {
-	color: var(--accent);
+	color: var(--active-color);
 }
 
 .collection-label {
@@ -473,12 +472,10 @@ html.dark .checkbox input:checked ~ .checkbox-mark::after {
 	color: var(--text-tertiary);
 	padding: 2px 7px;
 	border-radius: 10px;
-	background: var(--hover-bg);
 }
 
 .collection-item.active .collection-count {
-	color: var(--accent);
-	background: var(--accent-soft);
+	color: var(--active-color);
 }
 
 .sidebar-footer {
@@ -1082,8 +1079,10 @@ html.dark .waveform-path.played {
 }
 
 .file-list-toolbar {
-	padding: 10px 14px 0;
+	padding: 10px 14px 12px;
 	flex-shrink: 0;
+	background: var(--bg);
+	border-bottom: 1px solid var(--border-subtle);
 }
 
 .filename-search {
@@ -1097,6 +1096,11 @@ html.dark .waveform-path.played {
 	color: var(--text);
 	outline: none;
 	transition: border-color 0.15s;
+}
+
+.filename-search::placeholder {
+	color: var(--text-secondary);
+	opacity: 0.85;
 }
 
 .filename-search:focus {
@@ -1323,13 +1327,33 @@ html.dark .waveform-path.played {
 	color: white;
 }
 
-.checkbox-col { width: 56px; }
-.filename-col { width: auto; }
-.file-table-no-checkboxes .filename-col .header-content { padding-left: 16px; }
-.format-col { width: 100px; }
-.length-col { width: 100px; }
-.size-col { width: 100px; }
-.tags-col { width: 200px; }
+.checkbox-col {
+	width: 56px;
+}
+
+.filename-col {
+	width: auto;
+}
+
+.file-table-no-checkboxes .filename-col .header-content {
+	padding-left: 16px;
+}
+
+.format-col {
+	width: 100px;
+}
+
+.length-col {
+	width: 100px;
+}
+
+.size-col {
+	width: 100px;
+}
+
+.tags-col {
+	width: 200px;
+}
 
 .tags-wrapper {
 	display: flex;
@@ -1396,7 +1420,7 @@ html.dark .waveform-path.played {
 	justify-items: start;
 }
 
-.tag-tagging > * {
+.tag-tagging>* {
 	grid-area: 1/1;
 }
 
@@ -2179,7 +2203,6 @@ html.dark .context-menu {
 	font-size: 10px;
 	font-weight: 600;
 	color: var(--text-secondary);
-	text-transform: uppercase;
 	margin-right: 4px;
 }
 
