@@ -114,7 +114,10 @@ fn installed_binary(app: &AppHandle) -> PathBuf {
 }
 
 fn is_executable(path: &Path) -> bool {
-    path.is_file() && std::fs::metadata(path).map(|m| m.len() > 0).unwrap_or(false)
+    path.is_file()
+        && std::fs::metadata(path)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
 }
 
 fn discover_on_path(name: &str) -> Option<PathBuf> {
@@ -163,7 +166,8 @@ pub fn discover(app: Option<&AppHandle>) -> Option<PathBuf> {
 
 pub fn program_path(app: Option<&AppHandle>) -> Result<PathBuf, String> {
     discover(app).ok_or_else(|| {
-        "FFmpeg is not installed. Use Download when prompted or install FFmpeg manually.".to_string()
+        "FFmpeg is not installed. Use Download when prompted or install FFmpeg manually."
+            .to_string()
     })
 }
 
@@ -226,8 +230,7 @@ fn download_file(app: &AppHandle, url: &str, dest: &Path) -> Result<(), String> 
         if read == 0 {
             break;
         }
-        file.write_all(&buffer[..read])
-            .map_err(|e| e.to_string())?;
+        file.write_all(&buffer[..read]).map_err(|e| e.to_string())?;
         downloaded += read as u64;
         if let Some(total) = total {
             let pct = (downloaded as f32 / total as f32).min(0.95);

@@ -199,7 +199,10 @@ pub fn update_tags(
 
 use rayon::prelude::*;
 
-pub fn scan_folder(folder_path: &Path, conn: &Connection) -> rusqlite::Result<Vec<(String, String)>> {
+pub fn scan_folder(
+    folder_path: &Path,
+    conn: &Connection,
+) -> rusqlite::Result<Vec<(String, String)>> {
     // 1. Get all file paths that are not hidden
     let entries: Vec<_> = WalkDir::new(folder_path)
         .into_iter()
@@ -342,7 +345,12 @@ where
     mp3_path.set_extension("mp3");
 
     // If the file is already an mp3, we don't need to do anything
-    if path.extension().and_then(|e| e.to_str()).map(|s| s.to_lowercase()) == Some("mp3".to_string()) {
+    if path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_lowercase())
+        == Some("mp3".to_string())
+    {
         return Ok(mp3_path);
     }
 
@@ -396,7 +404,7 @@ pub fn normalize_file_destructive(path: &Path) -> Result<(), String> {
     let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("wav");
     let mut temp_path = path.to_path_buf();
     temp_path.set_extension(format!("normalized.{}", extension));
-    
+
     // Use ffmpeg's loudnorm filter for EBU R128 normalization
     let output = create_ffmpeg_command()?
         .arg("-i")
@@ -414,7 +422,8 @@ pub fn normalize_file_destructive(path: &Path) -> Result<(), String> {
     }
 
     // Replace original file with normalized one
-    std::fs::rename(&temp_path, path).map_err(|e| format!("Failed to replace original file: {}", e))?;
+    std::fs::rename(&temp_path, path)
+        .map_err(|e| format!("Failed to replace original file: {}", e))?;
 
     Ok(())
 }
@@ -475,7 +484,10 @@ where
     }
 
     let meta_opts = MetadataOptions::default();
-    let fmt_opts = FormatOptions { enable_gapless: false, ..Default::default() };
+    let fmt_opts = FormatOptions {
+        enable_gapless: false,
+        ..Default::default()
+    };
     let probed = symphonia::default::get_probe()
         .format(&hint, mss, &fmt_opts, &meta_opts)
         .ok()?;
@@ -502,7 +514,9 @@ where
 
     // Pre-compute bar start frames when total is known, eliminating per-sample division.
     let bar_starts: Option<Vec<u64>> = total_frames.map(|total| {
-        (0..=bars).map(|b| (b as u64 * total) / bars as u64).collect()
+        (0..=bars)
+            .map(|b| (b as u64 * total) / bars as u64)
+            .collect()
     });
 
     let mut last_progress = -1.0f32;
@@ -532,7 +546,9 @@ where
                                 };
                                 for i in 0..frames {
                                     let frame_abs = start_frame + i as u64;
-                                    while bar_cursor + 1 < bars && frame_abs >= bar_starts[bar_cursor + 1] {
+                                    while bar_cursor + 1 < bars
+                                        && frame_abs >= bar_starts[bar_cursor + 1]
+                                    {
                                         bar_cursor += 1;
                                     }
                                     let val: f32 = $convert(plane[i]);
@@ -544,13 +560,19 @@ where
 
                     match buf_ref {
                         AudioBufferRef::F32(buf) => process_planes!(buf, |s: f32| s.abs()),
-                        AudioBufferRef::U8(buf) => process_planes!(buf, |s: u8| ((s as f32 - 128.0) / 128.0).abs()),
-                        AudioBufferRef::S16(buf) => process_planes!(buf, |s: i16| (s as f32 / 32768.0).abs()),
+                        AudioBufferRef::U8(buf) => {
+                            process_planes!(buf, |s: u8| ((s as f32 - 128.0) / 128.0).abs())
+                        }
+                        AudioBufferRef::S16(buf) => {
+                            process_planes!(buf, |s: i16| (s as f32 / 32768.0).abs())
+                        }
                         AudioBufferRef::S24(buf) => {
                             use symphonia::core::sample::i24;
                             process_planes!(buf, |s: i24| (s.0 as f32 / 8388608.0).abs())
                         }
-                        AudioBufferRef::S32(buf) => process_planes!(buf, |s: i32| (s as f32 / 2147483648.0).abs()),
+                        AudioBufferRef::S32(buf) => {
+                            process_planes!(buf, |s: i32| (s as f32 / 2147483648.0).abs())
+                        }
                         _ => {}
                     }
 
@@ -577,8 +599,10 @@ where
         return None;
     }
 
-    let result: Vec<u8> = current_bars.iter().map(|&v| (v * 255.0).min(255.0) as u8).collect();
+    let result: Vec<u8> = current_bars
+        .iter()
+        .map(|&v| (v * 255.0).min(255.0) as u8)
+        .collect();
 
     Some(result)
 }
-

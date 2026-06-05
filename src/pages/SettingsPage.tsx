@@ -1,12 +1,15 @@
+import { useState } from 'react';
 import { getDefaultTitlebarLayout, type TitlebarStyleSetting } from '@/lib/platform';
 import { collectionStore } from '@/lib/collection-store';
 import { settingsStore } from '@/lib/settings-store';
 import { useStoreVersion, useSettingsVersion } from '@/lib/store-sync';
 import { TitlebarVisualizer } from '@/components/TitlebarVisualizer';
+import { checkForUpdates, type UpdateCheckState } from '@/lib/updater';
 import version from '../../package.json';
 
 export default function SettingsPage() {
 	useStoreVersion(useSettingsVersion);
+	const [updateState, setUpdateState] = useState<UpdateCheckState>('idle');
 
 	return (
 		<div className="settings-page settings">
@@ -239,8 +242,21 @@ export default function SettingsPage() {
 				</section>
 
 				<section className="settings-section">
-					<h2>About</h2>
-					<p>Sonixy v{version.version}</p>
+					<h2>Updates</h2>
+					<div className="setting-item">
+						<p>Sonixy v{version.version}</p>
+						<button
+							type="button"
+							className="reset-btn"
+							disabled={updateState === 'checking'}
+							onClick={() => {
+								setUpdateState('checking');
+								void checkForUpdates(false).then((state) => setUpdateState(state));
+							}}
+						>
+							{updateState === 'checking' ? 'Checking…' : 'Check for updates'}
+						</button>
+					</div>
 				</section>
 			</div>
 		</div>

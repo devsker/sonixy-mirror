@@ -13,6 +13,7 @@ import { collectionStore } from '@/lib/collection-store';
 import { audioPlayer } from '@/lib/audio-player';
 import { settingsStore } from '@/lib/settings-store';
 import { preloadDragIcon } from '@/lib/file-drag';
+import { checkForUpdatesOnStartup } from '@/lib/updater';
 import { useStoreVersion, useCollectionVersion, useSettingsVersion } from '@/lib/store-sync';
 
 function applyTheme(value: string) {
@@ -41,6 +42,7 @@ export default function App() {
 
 	useEffect(() => {
 		preloadDragIcon();
+		checkForUpdatesOnStartup();
 
 		const unlistenFfmpeg = listen<{ progress: number; message: string }>(
 			'ffmpeg-download-progress',

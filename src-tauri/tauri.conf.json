@@ -29,10 +29,20 @@
 		}
 	},
 	"plugins": {
-		"drag": {}
+		"drag": {},
+		"updater": {
+			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ0RTZFOEFENUMzNTk3QTQKUldTa2x6VmNyZWptMUIrd2cxV25Pa1NlOU4veDIybEF2TDlQV1AyYzFRdHNvQ0ZKREFVS2VMd24K",
+			"endpoints": [
+				"https://github.com/sker/sonixy-mirror/releases/latest/download/latest.json"
+			],
+			"windows": {
+				"installMode": "passive"
+			}
+		}
 	},
 	"bundle": {
 		"active": true,
+		"createUpdaterArtifacts": true,
 		"targets": ["deb", "rpm", "dmg", "app", "msi", "nsis"],
 		"resources": ["icons/32x32.png"],
 		"icon": [

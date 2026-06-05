@@ -184,8 +184,7 @@ fn export_collection_inner(
     let mut step = 0usize;
 
     let manifest = build_manifest(collection_path)?;
-    let manifest_json =
-        serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?;
+    let manifest_json = serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?;
 
     if let Some(parent) = output_path.parent() {
         if !parent.as_os_str().is_empty() {

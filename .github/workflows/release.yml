@@ -134,6 +134,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # macOS signing & notarization (https://v2.tauri.app/distribute/sign/macos/)
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -146,6 +148,9 @@ jobs:
           APPLE_API_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
         with:
           tauriScript: pnpm tauri
+          includeUpdaterJson: true
+          updaterJsonKeepUniversal: true
+          updaterJsonPreferNsis: true
           tagName: >-
             ${{ (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.create_release))
                 && '__VERSION__' || '' }}
