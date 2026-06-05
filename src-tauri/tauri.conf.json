@@ -31,7 +31,7 @@
 	"plugins": {
 		"drag": {},
 		"updater": {
-			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ0RTZFOEFENUMzNTk3QTQKUldTa2x6VmNyZWptMUIrd2cxV25Pa1NlOU4veDIybEF2TDlQV1AyYzFRdHNvQ0ZKREFVS2VMd24K",
+			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVCQzg5REU5MEVDNjM0NjMKUldSak5NWU82WjNJNjJRcFZYYjduRlpKNjQ4eFN0NGVoaFdsVzloR2s3QVVsMktJZk1XQnhHWmgK",
 			"endpoints": [
 				"https://github.com/sker/sonixy-mirror/releases/latest/download/latest.json"
 			],
