@@ -1,38 +1,30 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { collectionStore, type FileItem } from './collection-store.svelte';
-import { settingsStore } from './settings-store.svelte';
+import { collectionStore, type FileItem } from './collection-store';
+import { useAudioVersion } from './store-sync';
+import { settingsStore } from './settings-store';
 
 class AudioPlayer {
-	currentFileId = $state<string | null>(null);
-	isPlaying = $state(false);
-	isWaitingToReplay = $state(false);
-	replayProgress = $state(0);
-	currentTime = $state(0);
-	duration = $state(0);
-	volume = $state(settingsStore.volume);
+	currentFileId: string | null = null;
+	isPlaying = false;
+	isWaitingToReplay = false;
+	replayProgress = 0;
+	currentTime = 0;
+	duration = 0;
+	volume = settingsStore.volume;
 	private lastVolume = settingsStore.volume > 0 ? settingsStore.volume : 1;
-	progress = $derived(this.duration > 0 ? this.currentTime / this.duration : 0);
+	get progress() {
+		return this.duration > 0 ? this.currentTime / this.duration : 0;
+	}
 	private animationFrame: number | null = null;
 	private replayAnimationFrame: number | null = null;
 	private replayTimeout: ReturnType<typeof setTimeout> | null = null;
-
-	abLoopEnabled = $state(false);
-	abLoopStart = $state(0);
-	abLoopEnd = $state(1);
-
+	abLoopEnabled = false;
+	abLoopStart = 0;
+	abLoopEnd = 1;
 	constructor() {
 		if (typeof window !== 'undefined') {
 			invoke('set_volume', { volume: this.volume });
-
-			$effect.root(() => {
-				$effect(() => {
-					const v = this.volume;
-					if (settingsStore.volume !== v) {
-						settingsStore.volume = v;
-					}
-				});
-			});
 
 			listen('audio-ended', () => {
 				if (this.abLoopEnabled && this.currentFileId) {
@@ -54,9 +46,15 @@ class AudioPlayer {
 					const startTime = performance.now();
 					const delay = settingsStore.playbackDelay;
 
+					let lastReplayNotify = 0;
 					const updateReplayProgress = (now: number) => {
 						const elapsed = now - startTime;
 						this.replayProgress = Math.min(1, elapsed / delay);
+						const t = performance.now();
+						if (t - lastReplayNotify > 50) {
+							this.notify();
+							lastReplayNotify = t;
+						}
 
 						if (elapsed < delay) {
 							this.replayAnimationFrame = requestAnimationFrame(updateReplayProgress);
@@ -82,6 +80,10 @@ class AudioPlayer {
 				}
 			});
 		}
+	}
+
+	notify() {
+		useAudioVersion.getState().bump();
 	}
 
 	setAbLoop(start: number, end: number) {
@@ -125,10 +127,16 @@ class AudioPlayer {
 
 	private startUpdateLoop() {
 		if (this.animationFrame) return;
+		let lastPlaybackNotify = 0;
 		const update = async () => {
 			if (this.isPlaying) {
 				this.currentTime = await invoke<number>('get_audio_time');
 				await this.checkAbLoopBoundary();
+				const t = performance.now();
+				if (t - lastPlaybackNotify > 50) {
+					this.notify();
+					lastPlaybackNotify = t;
+				}
 				this.animationFrame = requestAnimationFrame(update);
 			} else {
 				this.animationFrame = null;
@@ -167,6 +175,7 @@ class AudioPlayer {
 			await invoke('play_audio', { path: file.filepath, gain: file.gain || 1.0 });
 			this.isPlaying = true;
 			this.startUpdateLoop();
+			this.notify();
 		} catch (e) {
 			console.error('AudioPlayer: Playback failed:', e);
 		}
@@ -177,6 +186,7 @@ class AudioPlayer {
 		invoke('pause_audio');
 		this.isPlaying = false;
 		this.stopUpdateLoop();
+		this.notify();
 	}
 
 	resume() {
@@ -184,6 +194,7 @@ class AudioPlayer {
 		invoke('resume_audio');
 		this.isPlaying = true;
 		this.startUpdateLoop();
+		this.notify();
 	}
 
 	toggle(file?: FileItem) {
@@ -215,6 +226,11 @@ class AudioPlayer {
 			this.lastVolume = this.volume;
 		}
 		invoke('set_volume', { volume: this.volume });
+		if (settingsStore.volume !== this.volume) {
+			settingsStore.volume = this.volume;
+			settingsStore.notify();
+		}
+		this.notify();
 	}
 
 	toggleMute() {
@@ -231,7 +247,9 @@ class AudioPlayer {
 
 		let nextIndex = 0;
 		if (this.currentFileId) {
-			const currentIndex = collectionStore.displayedFiles.findIndex((f) => f.id === this.currentFileId);
+			const currentIndex = collectionStore.displayedFiles.findIndex(
+				(f) => f.id === this.currentFileId
+			);
 			nextIndex = (currentIndex + 1) % collectionStore.displayedFiles.length;
 		}
 
@@ -246,8 +264,12 @@ class AudioPlayer {
 
 		let prevIndex = collectionStore.displayedFiles.length - 1;
 		if (this.currentFileId) {
-			const currentIndex = collectionStore.displayedFiles.findIndex((f) => f.id === this.currentFileId);
-			prevIndex = (currentIndex - 1 + collectionStore.displayedFiles.length) % collectionStore.displayedFiles.length;
+			const currentIndex = collectionStore.displayedFiles.findIndex(
+				(f) => f.id === this.currentFileId
+			);
+			prevIndex =
+				(currentIndex - 1 + collectionStore.displayedFiles.length) %
+				collectionStore.displayedFiles.length;
 		}
 
 		const prevFile = collectionStore.displayedFiles[prevIndex];
@@ -263,6 +285,7 @@ class AudioPlayer {
 		this.currentFileId = null;
 		this.currentTime = 0;
 		this.stopUpdateLoop();
+		this.notify();
 	}
 
 	stopIfPlaying(fileId: string) {

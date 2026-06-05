@@ -1,6 +1,6 @@
 [package]
 name = "sonixy"
-version = "0.3.1"
+version = "0.3.2"
 description = "lightweight audio collection manager"
 authors = ["sker"]
 edition = "2021"
@@ -36,3 +36,9 @@ ureq = { version = "3", features = ["rustls"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 tar = "0.4"
 xz2 = "0.1"
+flate2 = "1"
+time = { version = "0.3", features = ["formatting"] }
+tauri-plugin-process = "2"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"

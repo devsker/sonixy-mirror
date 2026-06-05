@@ -1,4 +1,5 @@
-import { isDev } from '$lib/dev';
+import { isDev } from './dev';
+import { useDebugAccessVersion } from './store-sync';
 
 const UNLOCK_STORAGE_KEY = 'sonixy.debugUnlocked';
 const SETTINGS_CLICKS_TO_UNLOCK = 4;
@@ -10,10 +11,14 @@ function readUnlockedFromStorage(): boolean {
 }
 
 class DebugSettingsAccess {
-	unlocked = $state(isDev || readUnlockedFromStorage());
+	unlocked = isDev || readUnlockedFromStorage();
 
 	private settingsClickCount = 0;
 	private settingsClickResetTimer: ReturnType<typeof setTimeout> | undefined;
+
+	notify() {
+		useDebugAccessVersion.getState().bump();
+	}
 
 	get visible(): boolean {
 		return isDev || this.unlocked;
@@ -23,9 +28,9 @@ class DebugSettingsAccess {
 		if (this.unlocked) return;
 		localStorage.setItem(UNLOCK_STORAGE_KEY, '1');
 		this.unlocked = true;
+		this.notify();
 	}
 
-	/** Call from the sidebar Settings control; navigates normally. */
 	registerSettingsClick(): void {
 		if (this.visible) return;
 

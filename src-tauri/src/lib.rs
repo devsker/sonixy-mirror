@@ -1,5 +1,6 @@
 mod collection;
 mod ffmpeg;
+mod library_archive;
 
 use crate::collection::FileItem;
 use rayon::prelude::*;
@@ -200,6 +201,76 @@ async fn switch_collection(
 }
 
 #[tauri::command]
+async fn delete_collection_folder(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let folder = PathBuf::from(&path);
+    if !folder.is_dir() {
+        return Err("Library folder not found".to_string());
+    }
+
+    let canonical = folder
+        .canonicalize()
+        .map_err(|e| format!("Invalid library path: {e}"))?;
+
+    if canonical.components().count() < 2 {
+        return Err("Refusing to delete this path".to_string());
+    }
+
+    {
+        let open = state
+            .collection_path
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?;
+        if let Some(open_path) = open.as_ref() {
+            let open_canonical = open_path
+                .canonicalize()
+                .unwrap_or_else(|_| open_path.clone());
+            if open_canonical == canonical {
+                return Err("Unload the library before deleting it".to_string());
+            }
+        }
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::remove_dir_all(&canonical).map_err(|e| format!("Failed to delete library: {e}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn close_collection(state: State<'_, AppState>) -> Result<(), String> {
+    {
+        let mut state_path = state
+            .collection_path
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?;
+        *state_path = None;
+    }
+
+    {
+        let mut tasks = state
+            .waveform_queue
+            .tasks
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?;
+        tasks.clear();
+    }
+
+    state.waveform_queue.paused.store(false, Ordering::SeqCst);
+    state.waveform_queue.cvar.notify_all();
+    state.waveform_queue.pause_cvar.notify_all();
+
+    let sink = state
+        .audio
+        .sink
+        .lock()
+        .map_err(|_| "State poisoned".to_string())?;
+    sink.stop();
+
+    Ok(())
+}
+
+#[tauri::command]
 async fn rescan_collection(state: State<'_, AppState>) -> Result<CollectionResult, String> {
     let state_path = state
         .collection_path
@@ -208,7 +279,8 @@ async fn rescan_collection(state: State<'_, AppState>) -> Result<CollectionResul
     let folder_path = state_path.as_ref().ok_or("No collection open")?.clone();
 
     let conn = collection::init_db(&folder_path).map_err(|e| e.to_string())?;
-    let conversion_needed = collection::scan_folder(&folder_path, &conn).map_err(|e| e.to_string())?;
+    let conversion_needed =
+        collection::scan_folder(&folder_path, &conn).map_err(|e| e.to_string())?;
     let files = collection::get_all_files(&folder_path, &conn).map_err(|e| e.to_string())?;
 
     let (conversion_ids, waveform_ids) =
@@ -315,13 +387,20 @@ async fn relocate_file(
         .strip_prefix(folder_path)
         .map_err(|_| "Path calculation error")?;
     let filepath_str = relative_path.to_string_lossy().to_string();
-    collection::update_file_path(&id, &filepath_str, &conn)
-        .map_err(|e| e.to_string())?;
+    collection::update_file_path(&id, &filepath_str, &conn).map_err(|e| e.to_string())?;
 
     // Check if it needs conversion
-    let ext = dest_path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let ext = dest_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
     if (ext == "ogg" || ext == "oga") && action != "link" {
-        let mut tasks = state.waveform_queue.tasks.lock().map_err(|_| "State poisoned")?;
+        let mut tasks = state
+            .waveform_queue
+            .tasks
+            .lock()
+            .map_err(|_| "State poisoned")?;
         tasks.push_back(WaveformTask {
             id: id.clone(),
             collection_path: folder_path.clone(),
@@ -440,7 +519,9 @@ async fn add_files_to_collection(
                     id: item.id.clone(),
                     collection_path: folder_path.clone(),
                     relative_path: item.filepath.clone(),
-                    task_type: TaskType::Convert { id: item.id.clone() },
+                    task_type: TaskType::Convert {
+                        id: item.id.clone(),
+                    },
                 });
             }
         }
@@ -449,7 +530,11 @@ async fn add_files_to_collection(
 
     // Add conversion tasks to queue
     if !conversion_tasks.is_empty() {
-        let mut tasks = state.waveform_queue.tasks.lock().map_err(|_| "State poisoned")?;
+        let mut tasks = state
+            .waveform_queue
+            .tasks
+            .lock()
+            .map_err(|_| "State poisoned")?;
         for task in conversion_tasks {
             tasks.push_back(task);
         }
@@ -469,7 +554,58 @@ async fn add_files_to_collection(
 }
 
 #[tauri::command]
-fn regenerate_waveforms(normalize: bool, state: State<'_, AppState>) -> Result<Vec<String>, String> {
+fn export_collection_library(
+    output_path: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let collection_path = state
+        .collection_path
+        .lock()
+        .map_err(|_| "State poisoned".to_string())?
+        .clone()
+        .ok_or("No collection open")?;
+
+    {
+        let tasks = state
+            .waveform_queue
+            .tasks
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?;
+        if !tasks.is_empty() {
+            return Err(
+                "Wait for waveform or conversion tasks to finish before exporting".to_string(),
+            );
+        }
+    }
+
+    let output = PathBuf::from(output_path);
+    std::thread::spawn(move || {
+        let _ = library_archive::export_collection(&collection_path, &output, &app);
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn import_collection_library(
+    archive_path: String,
+    parent_dir: String,
+    app: AppHandle,
+) -> Result<(), String> {
+    let archive = PathBuf::from(archive_path);
+    let parent = PathBuf::from(parent_dir);
+
+    std::thread::spawn(move || {
+        let _ = library_archive::import_collection(archive.as_path(), parent.as_path(), &app);
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn regenerate_waveforms(
+    normalize: bool,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
     let state_path = state
         .collection_path
         .lock()
@@ -510,7 +646,7 @@ fn play_audio(path: String, gain: f32, state: State<'_, AppState>) -> Result<(),
     let mut file = File::open(full_path).map_err(|e| e.to_string())?;
     let mut data = Vec::new();
     file.read_to_end(&mut data).map_err(|e| e.to_string())?;
-    
+
     let source = Decoder::new(Cursor::new(data)).map_err(|e| e.to_string())?;
 
     state.audio.suppress_ended.store(true, Ordering::SeqCst);
@@ -749,22 +885,24 @@ async fn update_file_tags(
         "SELECT id, filename, filepath, format, length, duration, size, tags, gain FROM files WHERE id = ?1",
     ).map_err(|e| e.to_string())?;
 
-    let item = stmt.query_row([&id], |row| {
-        let tags_json: String = row.get(7)?;
-        let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
-        Ok(FileItem {
-            id: row.get(0)?,
-            filename: row.get(1)?,
-            filepath: relative_path,
-            format: row.get(3)?,
-            length: row.get(4)?,
-            duration: row.get(5)?,
-            size: row.get(6)?,
-            tags,
-            gain: row.get(8)?,
-            missing: false,
+    let item = stmt
+        .query_row([&id], |row| {
+            let tags_json: String = row.get(7)?;
+            let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+            Ok(FileItem {
+                id: row.get(0)?,
+                filename: row.get(1)?,
+                filepath: relative_path,
+                format: row.get(3)?,
+                length: row.get(4)?,
+                duration: row.get(5)?,
+                size: row.get(6)?,
+                tags,
+                gain: row.get(8)?,
+                missing: false,
+            })
         })
-    }).map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?;
 
     Ok(item)
 }
@@ -820,6 +958,8 @@ pub fn run() {
     });
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             collection_path: Mutex::new(None),
             waveform_queue: Arc::clone(&waveform_queue),
@@ -1020,6 +1160,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_collection,
             switch_collection,
+            close_collection,
+            delete_collection_folder,
             rescan_collection,
             get_collection_files,
             get_waveform,
@@ -1039,7 +1181,9 @@ pub fn run() {
             pause_processing,
             resume_processing,
             ffmpeg_is_available,
-            ensure_ffmpeg
+            ensure_ffmpeg,
+            export_collection_library,
+            import_collection_library
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
