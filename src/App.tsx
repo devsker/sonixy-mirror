@@ -14,8 +14,7 @@ import { resolveShortcutAction } from '@/lib/keyboard-shortcuts';
 import { settingsStore } from '@/lib/settings-store';
 import { preloadDragIcon } from '@/lib/file-drag';
 import { checkForUpdatesOnStartup } from '@/lib/updater';
-import { filterExternalDropPaths } from '@/lib/external-drop';
-import { promptCopyOrMove } from '@/lib/native-dialog';
+import { handleExternalFileDrop } from '@/lib/external-drop';
 import { useStoreVersion, useCollectionVersion, useSettingsVersion } from '@/lib/store-sync';
 
 function applyTheme(value: string) {
@@ -60,23 +59,8 @@ export default function App() {
 		const unlistenPromise = appWindow.onDragDropEvent((event) => {
 			if (collectionStore.isDraggingFromApp) return;
 
-			if (event.payload.type === 'drop' && collectionStore.collectionPath) {
-				const filteredPaths = filterExternalDropPaths(
-					event.payload.paths,
-					collectionStore.collectionPath
-				);
-
-				if (filteredPaths.length > 0) {
-					void (async () => {
-						const action = await promptCopyOrMove('drop');
-						if (!action) return;
-						await collectionStore.addFiles(
-							filteredPaths,
-							action,
-							settingsStore.normalizeOnImport
-						);
-					})();
-				}
+			if (event.payload.type === 'drop') {
+				void handleExternalFileDrop(event.payload.paths);
 			}
 		});
 

@@ -29,7 +29,11 @@ import {
 } from '@/lib/store-sync';
 import { useExternalFileDrag } from '@/lib/use-external-file-drag';
 import type { ExternalFileDragOptions } from '@/lib/file-drag';
-import { filterExternalDropPaths, isPhysicalPointInElement } from '@/lib/external-drop';
+import {
+	filterExternalDropPaths,
+	handleExternalFileDrop,
+	isPhysicalPointInElement
+} from '@/lib/external-drop';
 import { promptPickTag, promptRemoveFile, promptTagName } from '@/lib/native-dialog';
 
 const COLUMN_DRAG_THRESHOLD_PX = 5;
@@ -394,6 +398,7 @@ export function FileList({ onSelectionChange }: FileListProps) {
 			if (payload.type === 'drop') {
 				externalDragActiveRef.current = false;
 				setDropHover(false);
+				void handleExternalFileDrop(payload.paths);
 				return;
 			}
 
