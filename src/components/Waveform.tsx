@@ -18,7 +18,7 @@ export default function Waveform({
 	id = ''
 }: Props) {
 	useStoreVersion(useWaveformProgressVersion);
-	useStoreVersion(useAudioVersion);
+	const audioVersion = useStoreVersion(useAudioVersion);
 
 	const svgRef = useRef<SVGSVGElement>(null);
 
@@ -32,6 +32,7 @@ export default function Waveform({
 	const [isDragging, setIsDragging] = useState(false);
 	const [dragClipPath, setDragClipPath] = useState<string | null>(null);
 	const [isPreparingClip, setIsPreparingClip] = useState(false);
+	const [playProgress, setPlayProgress] = useState(0);
 
 	const progress = collectionStore.waveformProgress[id] || 0;
 	const partialData = collectionStore.partialWaveforms[id] || null;
@@ -64,9 +65,31 @@ export default function Waveform({
 		setSelectionStart(null);
 		setSelectionEnd(null);
 		setDragClipPath(null);
+		setPlayProgress(0);
 		audioPlayer.clearAbLoop();
 		void fetchWaveform();
 	}, [id, fetchWaveform]);
+
+	useEffect(() => {
+		const isActive = audioPlayer.currentFileId === id;
+		if (!isActive) {
+			setPlayProgress(0);
+			return;
+		}
+
+		if (!audioPlayer.isPlaying) {
+			setPlayProgress(audioPlayer.smoothProgress);
+			return;
+		}
+
+		let raf = 0;
+		const tick = () => {
+			setPlayProgress(audioPlayer.smoothProgress);
+			raf = requestAnimationFrame(tick);
+		};
+		raf = requestAnimationFrame(tick);
+		return () => cancelAnimationFrame(raf);
+	}, [id, audioVersion]);
 
 	useEffect(() => {
 		const unlistenStarted = listen<string>('waveform-started', (event) => {
@@ -247,7 +270,7 @@ export default function Waveform({
 						<rect
 							x="0"
 							y="0"
-							width={audioPlayer.currentFileId === id ? audioPlayer.progress * barsCount * 3 : 0}
+							width={audioPlayer.currentFileId === id ? playProgress * barsCount * 3 : 0}
 							height="100"
 						/>
 					</clipPath>

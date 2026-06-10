@@ -13,8 +13,18 @@ class AudioPlayer {
 	duration = 0;
 	volume = settingsStore.volume;
 	private lastVolume = settingsStore.volume > 0 ? settingsStore.volume : 1;
+	private lastSyncTime = 0;
+	private lastSyncWallClock = 0;
 	get progress() {
 		return this.duration > 0 ? this.currentTime / this.duration : 0;
+	}
+	get smoothProgress() {
+		return this.duration > 0 ? this.smoothTime / this.duration : 0;
+	}
+	get smoothTime() {
+		if (!this.isPlaying) return this.currentTime;
+		const elapsed = (performance.now() - this.lastSyncWallClock) / 1000;
+		return Math.min(this.duration, Math.max(0, this.lastSyncTime + elapsed));
 	}
 	private animationFrame: number | null = null;
 	private replayAnimationFrame: number | null = null;
@@ -114,28 +124,42 @@ class AudioPlayer {
 	private async checkAbLoopBoundary() {
 		if (!this.abLoopEnabled || this.duration <= 0) return;
 		const endTime = this.abLoopEnd * this.duration;
-		if (this.currentTime >= endTime - 0.05) {
+		const time = this.isPlaying ? this.smoothTime : this.currentTime;
+		if (time >= endTime - 0.05) {
 			await this.seekToFraction(this.abLoopStart);
 		}
+	}
+
+	private syncPlaybackClock(time = this.currentTime) {
+		this.lastSyncTime = time;
+		this.lastSyncWallClock = performance.now();
 	}
 
 	private async seekToFraction(fraction: number) {
 		const newTime = fraction * this.duration;
 		await invoke('seek_audio', { timeSeconds: newTime });
 		this.currentTime = newTime;
+		this.syncPlaybackClock(newTime);
 	}
 
 	private startUpdateLoop() {
 		if (this.animationFrame) return;
 		let lastPlaybackNotify = 0;
-		const update = async () => {
+		let lastPoll = 0;
+		const update = async (now: number) => {
 			if (this.isPlaying) {
-				this.currentTime = await invoke<number>('get_audio_time');
-				await this.checkAbLoopBoundary();
-				const t = performance.now();
-				if (t - lastPlaybackNotify > 50) {
+				if (now - lastPoll > 200) {
+					this.currentTime = await invoke<number>('get_audio_time');
+					this.syncPlaybackClock(this.currentTime);
+					lastPoll = now;
+					await this.checkAbLoopBoundary();
+				} else if (this.abLoopEnabled) {
+					this.currentTime = this.smoothTime;
+					await this.checkAbLoopBoundary();
+				}
+				if (now - lastPlaybackNotify > 50) {
 					this.notify();
-					lastPlaybackNotify = t;
+					lastPlaybackNotify = now;
 				}
 				this.animationFrame = requestAnimationFrame(update);
 			} else {
@@ -174,6 +198,8 @@ class AudioPlayer {
 		try {
 			await invoke('play_audio', { path: file.filepath, gain: file.gain || 1.0 });
 			this.isPlaying = true;
+			this.currentTime = 0;
+			this.syncPlaybackClock(0);
 			this.startUpdateLoop();
 			this.notify();
 		} catch (e) {
@@ -184,6 +210,8 @@ class AudioPlayer {
 	pause() {
 		this.clearReplayTimeout();
 		invoke('pause_audio');
+		this.currentTime = this.smoothTime;
+		this.syncPlaybackClock(this.currentTime);
 		this.isPlaying = false;
 		this.stopUpdateLoop();
 		this.notify();
@@ -192,6 +220,7 @@ class AudioPlayer {
 	resume() {
 		this.clearReplayTimeout();
 		invoke('resume_audio');
+		this.syncPlaybackClock(this.currentTime);
 		this.isPlaying = true;
 		this.startUpdateLoop();
 		this.notify();
@@ -298,6 +327,8 @@ class AudioPlayer {
 		const newTime = progressPercent * this.duration;
 		await invoke('seek_audio', { timeSeconds: newTime });
 		this.currentTime = newTime;
+		this.syncPlaybackClock(newTime);
+		this.notify();
 	}
 }
 
