@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { confirm as confirmDialog, open, save } from '@tauri-apps/plugin-dialog';
+import { promptCopyOrMove } from './native-dialog';
 import { listen } from '@tauri-apps/api/event';
 import { remove } from '@tauri-apps/plugin-fs';
 import { audioPlayer } from './audio-player';
@@ -48,7 +49,6 @@ class CollectionStore {
 	showSwitchingUi = false;
 	switchingToPath: string | null = null;
 	private switchingUiTimer: ReturnType<typeof setTimeout> | null = null;
-	pendingRelocate: { id: string; path: string } | null = null;
 	tasks: Task[] = [];
 	processingPaused = false;
 	processingFiles: Set<string> = new Set();
@@ -307,7 +307,6 @@ class CollectionStore {
 		this.currentlyProcessingIds = new Set();
 		this.waveformProgress = {};
 		this.partialWaveforms = {};
-		this.pendingRelocate = null;
 		this.loading = false;
 		this.endSwitchingUi();
 		localStorage.removeItem('lastCollectionPath');
@@ -667,8 +666,6 @@ class CollectionStore {
 			this.currentlyProcessingIds = new Set();
 			this.waveformProgress = {};
 			this.partialWaveforms = {};
-			this.pendingRelocate = null;
-
 			const result = await invoke<{
 				files: Omit<FileItem, 'selected'>[];
 				waveform_ids: string[];
@@ -814,8 +811,10 @@ class CollectionStore {
 					this.files = result.map((f) => ({ ...f, selected: false }));
 					this.updateTask(taskId, { progress: 100, status: 'completed' });
 				} else {
-					// Outside collection, ask user to copy or move
-					this.pendingRelocate = { id, path: selected };
+					const action = await promptCopyOrMove('relocate');
+					if (action) {
+						await this.relocateFileWithAction(id, selected, action);
+					}
 				}
 			}
 		} catch (e) {
@@ -826,8 +825,7 @@ class CollectionStore {
 		}
 	}
 
-	async confirmRelocate(action: 'copy' | 'move') {
-		if (!this.pendingRelocate) return;
+	private async relocateFileWithAction(id: string, path: string, action: 'copy' | 'move') {
 		const taskId = Math.random().toString(36).substring(7);
 		this.addTask({
 			id: taskId,
@@ -838,14 +836,12 @@ class CollectionStore {
 
 		try {
 			this.loading = true;
-			const { id, path } = this.pendingRelocate;
 			const result = await invoke<Omit<FileItem, 'selected'>[]>('relocate_file', {
 				id,
 				newPath: path,
 				action
 			});
 			this.files = result.map((f) => ({ ...f, selected: false }));
-			this.pendingRelocate = null;
 			this.updateTask(taskId, { progress: 100, status: 'completed' });
 		} catch (e) {
 			console.error('Failed to complete relocation', e);
@@ -934,8 +930,16 @@ class CollectionStore {
 
 	async removeFile(id: string) {
 		const file = this.files.find((f) => f.id === id);
-		if (!confirm(`Are you sure you want to remove "${file?.filename}" from the collection?`))
-			return;
+		const confirmed = await confirmDialog(
+			`Remove "${file?.filename}" from the collection?`,
+			{
+				title: 'Remove File',
+				kind: 'warning',
+				okLabel: 'Remove',
+				cancelLabel: 'Cancel'
+			}
+		);
+		if (!confirmed) return;
 
 		await this.removeFromCollectionOnly(id);
 	}

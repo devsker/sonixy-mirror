@@ -10,7 +10,6 @@ import {
 	AlertTriangle,
 	Trash2,
 	Circle,
-	Tag,
 	Plus,
 	Upload,
 	X
@@ -31,6 +30,7 @@ import {
 import { useExternalFileDrag } from '@/lib/use-external-file-drag';
 import type { ExternalFileDragOptions } from '@/lib/file-drag';
 import { filterExternalDropPaths, isPhysicalPointInElement } from '@/lib/external-drop';
+import { promptPickTag, promptRemoveFile, promptTagName } from '@/lib/native-dialog';
 
 const COLUMN_DRAG_THRESHOLD_PX = 5;
 
@@ -357,7 +357,6 @@ export function FileList({ onSelectionChange }: FileListProps) {
 	const columnDidDragRef = useRef(false);
 	const dragOverColumnRef = useRef<string | null>(null);
 
-	const [fileToRemove, setFileToRemove] = useState<FileItem | null>(null);
 	const [taggingFile, setTaggingFile] = useState<FileItem | null>(null);
 	const [newTagValue, setNewTagValue] = useState('');
 	const tagInputRef = useRef<HTMLInputElement | null>(null);
@@ -365,11 +364,6 @@ export function FileList({ onSelectionChange }: FileListProps) {
 	const dropTargetRef = useRef<HTMLDivElement | null>(null);
 	const externalDragActiveRef = useRef(false);
 	const [dropHover, setDropHover] = useState(false);
-
-	const [batchTagMode, setBatchTagMode] = useState<'add' | 'remove' | null>(null);
-	const [batchTagIds, setBatchTagIds] = useState<string[]>([]);
-	const [batchRemoveTagOptions, setBatchRemoveTagOptions] = useState<string[]>([]);
-	const [batchRemoveTagValue, setBatchRemoveTagValue] = useState('');
 
 	useEffect(() => {
 		onSelectionChange?.(selectedIds);
@@ -449,15 +443,20 @@ export function FileList({ onSelectionChange }: FileListProps) {
 		return () => cancelAnimationFrame(id);
 	}, [taggingFile]);
 
-	const closeRemoveDialog = () => setFileToRemove(null);
-
 	const closeTagDialog = () => {
 		setTaggingFile(null);
 		setNewTagValue('');
-		setBatchTagMode(null);
-		setBatchTagIds([]);
-		setBatchRemoveTagOptions([]);
-		setBatchRemoveTagValue('');
+	};
+
+	const handleRemoveFile = async (file: FileItem) => {
+		const choice = await promptRemoveFile(file.filename);
+		if (!choice) return;
+		audioPlayer.stopIfPlaying(file.id);
+		if (choice === 'collection') {
+			await collectionStore.removeFromCollectionOnly(file.id);
+		} else {
+			await collectionStore.removeFileFromDisk(file.id);
+		}
 	};
 
 	const toggleAll = () => {
@@ -519,26 +518,31 @@ export function FileList({ onSelectionChange }: FileListProps) {
 			showContextMenu(event.clientX, event.clientY, [
 				{
 					label: `Add tag to ${selectedFiles.length} files…`,
-					action: () => {
-						setBatchTagMode('add');
-						setBatchTagIds(selectedFiles.map((f) => f.id));
-						setNewTagValue('');
+					action: async () => {
+						const tag = await promptTagName(`Add tag to ${selectedFiles.length} files:`);
+						if (!tag) return;
+						await collectionStore.batchAddTag(
+							selectedFiles.map((f) => f.id),
+							tag
+						);
 					}
 				},
 				{
 					label: 'Remove tag from selection…',
 					disabled: unionTags.length === 0,
-					action: () => {
-						setBatchTagMode('remove');
-						setBatchTagIds(selectedFiles.map((f) => f.id));
-						setBatchRemoveTagOptions(unionTags);
-						setBatchRemoveTagValue(unionTags[0] ?? '');
+					action: async () => {
+						const tag = await promptPickTag(unionTags, selectedFiles.length);
+						if (!tag) return;
+						await collectionStore.batchRemoveTag(
+							selectedFiles.map((f) => f.id),
+							tag
+						);
 					}
 				},
 				{ separator: true },
 				{
 					label: 'Remove',
-					action: () => setFileToRemove(file)
+					action: () => void handleRemoveFile(file)
 				}
 			]);
 			return;
@@ -590,7 +594,7 @@ export function FileList({ onSelectionChange }: FileListProps) {
 			{
 				label: 'Remove',
 				disabled: isLocked,
-				action: () => setFileToRemove(file)
+				action: () => void handleRemoveFile(file)
 			}
 		]);
 	};
@@ -708,40 +712,23 @@ export function FileList({ onSelectionChange }: FileListProps) {
 	};
 
 	const handleAddTag = async () => {
-		if (batchTagMode === 'add' && batchTagIds.length > 0) {
-			await collectionStore.batchAddTag(batchTagIds, newTagValue);
-			closeTagDialog();
-			return;
+		if (!taggingFile) return;
+		const tag = newTagValue.trim();
+		if (tag && !taggingFile.tags.includes(tag)) {
+			const newTags = [...taggingFile.tags, tag];
+			await collectionStore.updateTags(taggingFile.id, newTags);
 		}
-		if (taggingFile) {
-			const tag = newTagValue.trim();
-			if (tag && !taggingFile.tags.includes(tag)) {
-				const newTags = [...taggingFile.tags, tag];
-				await collectionStore.updateTags(taggingFile.id, newTags);
-			}
-			closeTagDialog();
-		}
-	};
-
-	const handleBatchRemoveTag = async () => {
-		if (batchTagMode === 'remove' && batchTagIds.length > 0 && batchRemoveTagValue) {
-			await collectionStore.batchRemoveTag(batchTagIds, batchRemoveTagValue);
-			closeTagDialog();
-		}
+		closeTagDialog();
 	};
 
 	useEffect(() => {
 		const closePopovers = () => setActivePopover(null);
 		const onKeyDown = (e: KeyboardEvent) => {
 			if (e.key === 'Escape') {
-				closeRemoveDialog();
 				closeTagDialog();
 			}
-			if (e.key === 'Enter' && (taggingFile || batchTagMode === 'add')) {
+			if (e.key === 'Enter' && taggingFile) {
 				void handleAddTag();
-			}
-			if (e.key === 'Enter' && batchTagMode === 'remove') {
-				void handleBatchRemoveTag();
 			}
 		};
 		window.addEventListener('click', closePopovers);
@@ -750,27 +737,11 @@ export function FileList({ onSelectionChange }: FileListProps) {
 			window.removeEventListener('click', closePopovers);
 			window.removeEventListener('keydown', onKeyDown);
 		};
-	}, [taggingFile, batchTagMode, batchTagIds, batchRemoveTagValue, newTagValue]);
+	}, [taggingFile, newTagValue]);
 
 	const removeTag = async (file: FileItem, tagToRemove: string) => {
 		const newTags = file.tags.filter((t) => t !== tagToRemove);
 		await collectionStore.updateTags(file.id, newTags);
-	};
-
-	const confirmRemoveFromCollection = async () => {
-		if (fileToRemove) {
-			audioPlayer.stopIfPlaying(fileToRemove.id);
-			await collectionStore.removeFromCollectionOnly(fileToRemove.id);
-			closeRemoveDialog();
-		}
-	};
-
-	const confirmRemoveFromDisk = async () => {
-		if (fileToRemove) {
-			audioPlayer.stopIfPlaying(fileToRemove.id);
-			await collectionStore.removeFileFromDisk(fileToRemove.id);
-			closeRemoveDialog();
-		}
 	};
 
 	const containerContextMenu = (e: React.MouseEvent) => {
@@ -789,139 +760,6 @@ export function FileList({ onSelectionChange }: FileListProps) {
 
 	return (
 		<>
-			{fileToRemove && (
-				<div className="modal-backdrop" onClick={closeRemoveDialog} role="presentation">
-					<div
-						className="modal-content modal-content--padded"
-						onClick={(e) => e.stopPropagation()}
-						role="presentation"
-					>
-						<div className="modal-header">
-							<AlertTriangle size={24} className="warning-icon-large" />
-							<h3>Remove File</h3>
-						</div>
-						<div className="modal-body">
-							<p>
-								How would you like to remove <strong>{fileToRemove.filename}</strong>?
-							</p>
-							<p className="warning-text">
-								&quot;Remove from Disk&quot; will permanently delete the file.
-							</p>
-						</div>
-						<div className="modal-footer">
-							<button
-								type="button"
-																className="modal-btn modal-btn-secondary"
-								onClick={closeRemoveDialog}
-							>
-								Cancel
-							</button>
-							<div className="danger-group">
-								<button
-									type="button"
-									className="modal-btn modal-btn-danger-outline"
-									onClick={() => void confirmRemoveFromCollection()}
-								>
-									Remove from Collection
-								</button>
-								<button
-									type="button"
-									className="modal-btn modal-btn-danger"
-									onClick={() => void confirmRemoveFromDisk()}
-								>
-									Remove from Disk
-								</button>
-							</div>
-						</div>
-					</div>
-				</div>
-			)}
-
-			{batchTagMode === 'add' && (
-				<div className="modal-backdrop" onClick={closeTagDialog} role="presentation">
-					<div
-						className="modal-content modal-content--padded"
-						onClick={(e) => e.stopPropagation()}
-						role="presentation"
-					>
-						<div className="modal-header">
-							<Tag size={24} />
-							<h3>Add tag to {batchTagIds.length} files</h3>
-						</div>
-						<div className="modal-body">
-							<input
-								type="text"
-								className="batch-tag-input"
-								value={newTagValue}
-								onChange={(e) => setNewTagValue(e.target.value)}
-								placeholder="Tag name"
-								onKeyDown={(e) => e.key === 'Enter' && void handleAddTag()}
-							/>
-						</div>
-						<div className="modal-footer">
-							<button
-								type="button"
-																className="modal-btn modal-btn-secondary"
-								onClick={closeTagDialog}
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-																className="modal-btn modal-btn-primary"
-								onClick={() => void handleAddTag()}
-							>
-								Add
-							</button>
-						</div>
-					</div>
-				</div>
-			)}
-
-			{batchTagMode === 'remove' && (
-				<div className="modal-backdrop" onClick={closeTagDialog} role="presentation">
-					<div
-						className="modal-content modal-content--padded"
-						onClick={(e) => e.stopPropagation()}
-						role="presentation"
-					>
-						<div className="modal-header">
-							<Tag size={24} />
-							<h3>Remove tag from {batchTagIds.length} files</h3>
-						</div>
-						<div className="modal-body">
-							<select
-								className="batch-tag-select"
-								value={batchRemoveTagValue}
-								onChange={(e) => setBatchRemoveTagValue(e.target.value)}
-							>
-								{batchRemoveTagOptions.map((tag) => (
-									<option key={tag} value={tag}>
-										{tag}
-									</option>
-								))}
-							</select>
-						</div>
-						<div className="modal-footer">
-							<button
-								type="button"
-																className="modal-btn modal-btn-secondary"
-								onClick={closeTagDialog}
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-																className="modal-btn modal-btn-primary"
-								onClick={() => void handleBatchRemoveTag()}
-							>
-								Remove
-							</button>
-						</div>
-					</div>
-				</div>
-			)}
-
 			<div className="file-list-container" role="presentation" onContextMenu={containerContextMenu}>
 				{collectionPath &&
 					!showSwitchingUi &&

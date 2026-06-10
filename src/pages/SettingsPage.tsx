@@ -3,7 +3,9 @@ import { getDefaultTitlebarLayout, type TitlebarStyleSetting } from '@/lib/platf
 import { collectionStore } from '@/lib/collection-store';
 import { settingsStore } from '@/lib/settings-store';
 import { useStoreVersion, useSettingsVersion } from '@/lib/store-sync';
+import { ShortcutBinding } from '@/components/ShortcutBinding';
 import { TitlebarVisualizer } from '@/components/TitlebarVisualizer';
+import { SHORTCUT_GROUPS } from '@/lib/keyboard-shortcuts';
 import { checkForUpdates, type UpdateCheckState } from '@/lib/updater';
 import version from '../../package.json';
 
@@ -149,32 +151,33 @@ export default function SettingsPage() {
 						</p>
 					</div>
 
-					<div className="setting-item">
-						<h3>Keyboard shortcuts</h3>
-						<ul className="shortcut-list">
-							<li>
-								<kbd>Space</kbd> <kbd>K</kbd> Play / pause
-							</li>
-							<li>
-								<kbd>I</kbd> <kbd>O</kbd> Set selection in / out
-							</li>
-							<li>
-								<kbd>X</kbd> Clear selection
-							</li>
-							<li>
-								<kbd>J</kbd> <kbd>L</kbd> Slower / faster (keeps pitch; needs FFmpeg)
-							</li>
-							<li>
-								<kbd>←</kbd> <kbd>→</kbd> Previous / next file
-							</li>
-							<li>
-								<kbd>M</kbd> Mute / unmute
-							</li>
-							<li>
-								<kbd>Esc</kbd> Stop playback
-							</li>
-						</ul>
-					</div>
+				</section>
+
+				<section className="settings-section">
+					<h2>Keyboard shortcuts</h2>
+					<p className="description">
+						Click a key to change it, or use + to add an alternate. Shortcuts work anywhere except
+						when typing in a text field.
+					</p>
+
+					{SHORTCUT_GROUPS.map((group) => (
+						<div key={group.title} className="setting-item">
+							<h3>{group.title}</h3>
+							<ul className="shortcut-list">
+								{group.actions.map((entry) => (
+									<ShortcutBinding key={entry.id} action={entry.id} label={entry.label} />
+								))}
+							</ul>
+						</div>
+					))}
+
+					<button
+						type="button"
+						className="reset-btn"
+						onClick={() => settingsStore.resetKeyboardShortcuts()}
+					>
+						Reset keyboard shortcuts
+					</button>
 				</section>
 
 				<section className="settings-section">

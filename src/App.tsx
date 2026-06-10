@@ -4,17 +4,18 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Route, Routes } from 'react-router-dom';
 import { Titlebar } from '@/components/Titlebar';
 import Sidebar from '@/components/Sidebar';
-import DropPrompt from '@/components/DropPrompt';
 import ContextMenu from '@/components/ContextMenu';
 import HomePage from '@/pages/HomePage';
 import SettingsPage from '@/pages/SettingsPage';
 import DebugSettingsPage from '@/pages/DebugSettingsPage';
 import { collectionStore } from '@/lib/collection-store';
 import { audioPlayer } from '@/lib/audio-player';
+import { resolveShortcutAction } from '@/lib/keyboard-shortcuts';
 import { settingsStore } from '@/lib/settings-store';
 import { preloadDragIcon } from '@/lib/file-drag';
 import { checkForUpdatesOnStartup } from '@/lib/updater';
 import { filterExternalDropPaths } from '@/lib/external-drop';
+import { promptCopyOrMove } from '@/lib/native-dialog';
 import { useStoreVersion, useCollectionVersion, useSettingsVersion } from '@/lib/store-sync';
 
 function applyTheme(value: string) {
@@ -34,12 +35,8 @@ export default function App() {
 	const settingsVersion = useStoreVersion(useSettingsVersion);
 	void collectionVersion;
 
-	const [dropPaths, setDropPaths] = useState<string[]>([]);
-	const [showDropPrompt, setShowDropPrompt] = useState(false);
 	const [ffmpegDownloadMessage, setFfmpegDownloadMessage] = useState<string | null>(null);
 	const [ffmpegDownloadProgress, setFfmpegDownloadProgress] = useState(0);
-
-	const showDropPromptUi = showDropPrompt || collectionStore.pendingRelocate !== null;
 
 	useEffect(() => {
 		preloadDragIcon();
@@ -70,8 +67,15 @@ export default function App() {
 				);
 
 				if (filteredPaths.length > 0) {
-					setDropPaths(filteredPaths);
-					setShowDropPrompt(true);
+					void (async () => {
+						const action = await promptCopyOrMove('drop');
+						if (!action) return;
+						await collectionStore.addFiles(
+							filteredPaths,
+							action,
+							settingsStore.normalizeOnImport
+						);
+					})();
 				}
 			}
 		});
@@ -108,84 +112,54 @@ export default function App() {
 	function handleKeydown(e: KeyboardEvent) {
 		if (isTypingTarget(e.target)) return;
 
-		switch (e.code) {
-			case 'Space':
-			case 'KeyK':
-				e.preventDefault();
+		const action = resolveShortcutAction(e.code, settingsStore.keyboardShortcuts);
+		if (!action) return;
+
+		e.preventDefault();
+
+		switch (action) {
+			case 'togglePlay':
 				audioPlayer.toggle();
 				break;
-			case 'KeyI':
-				e.preventDefault();
+			case 'selectionIn':
 				audioPlayer.setSelectionIn();
 				break;
-			case 'KeyO':
-				e.preventDefault();
+			case 'selectionOut':
 				audioPlayer.setSelectionOut();
 				break;
-			case 'KeyX':
-				e.preventDefault();
+			case 'clearSelection':
 				audioPlayer.clearSelection();
 				break;
-			case 'ArrowLeft':
-				e.preventDefault();
+			case 'previousFile':
 				audioPlayer.previous();
 				break;
-			case 'ArrowRight':
-				e.preventDefault();
+			case 'nextFile':
 				audioPlayer.next();
 				break;
-			case 'KeyJ':
-				e.preventDefault();
+			case 'slower':
 				audioPlayer.cycleSlower();
 				break;
-			case 'KeyL':
-				e.preventDefault();
+			case 'faster':
 				audioPlayer.cycleFaster();
 				break;
-			case 'KeyM':
-				e.preventDefault();
+			case 'toggleMute':
 				audioPlayer.toggleMute();
 				break;
-			case 'Escape':
-				if (showDropPromptUi || collectionStore.pendingRelocate) return;
+			case 'stop':
 				audioPlayer.stop();
 				break;
 		}
 	}
 
-	async function handleDropSelect(action: 'copy' | 'move') {
-		if (collectionStore.pendingRelocate) {
-			await collectionStore.confirmRelocate(action);
-		} else if (dropPaths.length > 0) {
-			setShowDropPrompt(false);
-			await collectionStore.addFiles(dropPaths, action, settingsStore.normalizeOnImport);
-			setDropPaths([]);
-		}
-	}
-
-	function handleDropCancel() {
-		setShowDropPrompt(false);
-		collectionStore.pendingRelocate = null;
-		collectionStore.notify();
-		setDropPaths([]);
-	}
-
-	function closeDropPrompt() {
-		if (showDropPrompt) handleDropCancel();
-	}
-
 	useEffect(() => {
 		const onKeydown = (e: KeyboardEvent) => handleKeydown(e);
-		const onClick = () => closeDropPrompt();
 		const onContextMenu = (e: MouseEvent) => e.preventDefault();
 
 		window.addEventListener('keydown', onKeydown);
-		window.addEventListener('click', onClick);
 		window.addEventListener('contextmenu', onContextMenu);
 
 		return () => {
 			window.removeEventListener('keydown', onKeydown);
-			window.removeEventListener('click', onClick);
 			window.removeEventListener('contextmenu', onContextMenu);
 		};
 	});
@@ -203,8 +177,6 @@ export default function App() {
 					</Routes>
 				</main>
 			</div>
-
-			{showDropPromptUi && <DropPrompt onSelect={handleDropSelect} onCancel={handleDropCancel} />}
 
 			<ContextMenu />
 

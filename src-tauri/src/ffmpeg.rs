@@ -301,7 +301,7 @@ fn prompt_download(app: &AppHandle) -> Result<bool, String> {
         let confirmed = dialog_app
             .dialog()
             .message(
-                "Sonixy needs FFmpeg for clip export, format conversion, and loudness normalization.\n\n\
+                "Sonixy needs FFmpeg for clip export, format conversion, playback speed adjustment, and loudness normalization.\n\n\
                  Download FFmpeg now? (~80 MB; a third-party GPL-licensed static build will be installed)",
             )
             .title("FFmpeg required")

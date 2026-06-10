@@ -1,3 +1,10 @@
+import {
+	DEFAULT_KEYBOARD_SHORTCUTS,
+	mergeKeyboardShortcuts,
+	findShortcutConflict,
+	type KeyboardShortcuts,
+	type ShortcutAction
+} from './keyboard-shortcuts';
 import { getDefaultTitlebarLayout, type TitlebarStyleSetting } from './platform';
 import { useSettingsVersion } from './store-sync';
 
@@ -25,6 +32,7 @@ export interface Settings {
 	filenameQuery: string;
 	recentCollections: string[];
 	collectionUiByPath: Record<string, CollectionUiState>;
+	keyboardShortcuts: KeyboardShortcuts;
 }
 
 const RECENT_COLLECTIONS_MAX = 8;
@@ -45,6 +53,7 @@ export class SettingsStore {
 	filenameQuery = '';
 	recentCollections: string[] = [];
 	collectionUiByPath: Record<string, CollectionUiState> = {};
+	keyboardShortcuts: KeyboardShortcuts = mergeKeyboardShortcuts(null);
 
 	constructor() {
 		if (typeof window !== 'undefined') {
@@ -65,6 +74,7 @@ export class SettingsStore {
 					this.filenameQuery = parsed.filenameQuery ?? '';
 					this.recentCollections = parsed.recentCollections ?? [];
 					this.collectionUiByPath = parsed.collectionUiByPath ?? {};
+					this.keyboardShortcuts = mergeKeyboardShortcuts(parsed.keyboardShortcuts);
 
 					if (
 						parsed.titlebarStyle === 'macos' ||
@@ -124,9 +134,35 @@ export class SettingsStore {
 				selectedTags: this.selectedTags,
 				filenameQuery: this.filenameQuery,
 				recentCollections: this.recentCollections,
-				collectionUiByPath: this.collectionUiByPath
+				collectionUiByPath: this.collectionUiByPath,
+				keyboardShortcuts: this.keyboardShortcuts
 			})
 		);
+	}
+
+	setShortcutKeys(action: ShortcutAction, keys: string[]) {
+		this.keyboardShortcuts = {
+			...this.keyboardShortcuts,
+			[action]: keys
+		};
+		this.notify();
+	}
+
+	resetShortcutAction(action: ShortcutAction) {
+		this.keyboardShortcuts = {
+			...this.keyboardShortcuts,
+			[action]: [...DEFAULT_KEYBOARD_SHORTCUTS[action]]
+		};
+		this.notify();
+	}
+
+	resetKeyboardShortcuts() {
+		this.keyboardShortcuts = mergeKeyboardShortcuts(null);
+		this.notify();
+	}
+
+	findShortcutConflict(code: string, excludeAction?: ShortcutAction) {
+		return findShortcutConflict(code, this.keyboardShortcuts, excludeAction);
 	}
 
 	addRecentCollection(path: string) {
