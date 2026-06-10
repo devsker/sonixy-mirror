@@ -5,7 +5,7 @@ mod library_archive;
 use crate::collection::FileItem;
 use rayon::prelude::*;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::fs::File;
 use std::io::{Cursor, Read};
 use std::path::PathBuf;
@@ -65,6 +65,38 @@ struct CollectionResult {
     conversion_ids: Vec<String>,
 }
 
+fn queue_waveform_tasks(
+    folder_path: &PathBuf,
+    queue: &Arc<WaveformQueue>,
+    items: impl IntoIterator<Item = (String, String)>,
+    normalize: bool,
+) -> Result<Vec<String>, String> {
+    let mut tasks = queue
+        .tasks
+        .lock()
+        .map_err(|_| "State poisoned".to_string())?;
+    let mut queued_ids: HashSet<String> = tasks.iter().map(|t| t.id.clone()).collect();
+    let mut added_ids = Vec::new();
+
+    for (id, relative_path) in items {
+        if !queued_ids.insert(id.clone()) {
+            continue;
+        }
+        added_ids.push(id.clone());
+        tasks.push_back(WaveformTask {
+            id,
+            collection_path: folder_path.clone(),
+            relative_path,
+            task_type: TaskType::Waveform { normalize },
+        });
+    }
+
+    if !added_ids.is_empty() {
+        queue.cvar.notify_all();
+    }
+    Ok(added_ids)
+}
+
 fn queue_missing_waveforms(
     folder_path: &PathBuf,
     queue: &Arc<WaveformQueue>,
@@ -83,27 +115,14 @@ fn queue_missing_waveforms(
         })
         .map_err(|e| e.to_string())?;
 
-    let mut added_ids = Vec::new();
-    let mut tasks = queue
-        .tasks
-        .lock()
-        .map_err(|_| "State poisoned".to_string())?;
+    let mut missing = Vec::new();
     for row in missing_iter {
-        if let Ok((id, relative_path)) = row {
-            // Avoid duplicates in queue
-            if !tasks.iter().any(|existing| existing.id == id) {
-                added_ids.push(id.clone());
-                tasks.push_back(WaveformTask {
-                    id,
-                    collection_path: folder_path.clone(),
-                    relative_path,
-                    task_type: TaskType::Waveform { normalize },
-                });
-            }
+        if let Ok(item) = row {
+            missing.push(item);
         }
     }
-    queue.cvar.notify_all();
-    Ok(added_ids)
+
+    queue_waveform_tasks(folder_path, queue, missing, normalize)
 }
 
 fn enqueue_post_scan_work(
@@ -432,21 +451,19 @@ async fn remove_file_from_collection(
     Ok(files)
 }
 
-#[tauri::command]
-async fn add_files_to_collection(
+struct AddFilesWorkResult {
+    added_files: Vec<FileItem>,
+    conversion_tasks: Vec<WaveformTask>,
+    conversion_ids: Vec<String>,
+    waveform_items: Vec<(String, String)>,
+}
+
+fn add_files_blocking(
+    folder_path: PathBuf,
     files: Vec<String>,
     action: String,
-    normalize: bool,
-    state: State<'_, AppState>,
-) -> Result<CollectionResult, String> {
-    let state_path = state
-        .collection_path
-        .lock()
-        .map_err(|_| "State poisoned".to_string())?;
-    let folder_path = state_path.as_ref().ok_or("No collection open")?;
-
-    let folder_path_clone = folder_path.clone();
-    let action_clone = action.clone();
+) -> Result<AddFilesWorkResult, String> {
+    let action_clone = action;
 
     // Process files in parallel: copy/move and extract metadata
     let processed_items: Vec<Result<FileItem, String>> = files
@@ -461,9 +478,8 @@ async fn add_files_to_collection(
                 Ok(f) => f,
                 Err(e) => return Some(Err(e.to_string())),
             };
-            let dest_path = folder_path_clone.join(filename);
+            let dest_path = folder_path.join(filename);
 
-            // Perform copy/move
             if action_clone == "move" {
                 if let Err(e) = std::fs::rename(&src_path, &dest_path) {
                     return Some(Err(format!("Failed to move {}: {}", src_path.display(), e)));
@@ -476,7 +492,7 @@ async fn add_files_to_collection(
 
             // Extract metadata
             let relative_path = dest_path
-                .strip_prefix(&folder_path_clone)
+                .strip_prefix(&folder_path)
                 .unwrap_or(&dest_path);
             let filepath_str = relative_path.to_string_lossy().to_string();
 
@@ -489,11 +505,13 @@ async fn add_files_to_collection(
         })
         .collect();
 
-    let mut conn = collection::init_db(folder_path).map_err(|e| e.to_string())?;
+    let mut conn = collection::init_db(&folder_path).map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
+    let mut added_files = Vec::new();
     let mut conversion_tasks = Vec::new();
     let mut conversion_ids = Vec::new();
+    let mut waveform_items = Vec::new();
 
     for item_res in processed_items {
         if let Ok(item) = item_res {
@@ -512,6 +530,12 @@ async fn add_files_to_collection(
                 ],
             ).map_err(|e| e.to_string())?;
 
+            if tx.changes() == 0 {
+                continue;
+            }
+
+            added_files.push(item.clone());
+
             let ext = item.format.to_lowercase();
             if ext == "ogg" || ext == "oga" {
                 conversion_ids.push(item.id.clone());
@@ -523,33 +547,67 @@ async fn add_files_to_collection(
                         id: item.id.clone(),
                     },
                 });
+            } else {
+                waveform_items.push((item.id.clone(), item.filepath.clone()));
             }
         }
     }
     tx.commit().map_err(|e| e.to_string())?;
 
-    // Add conversion tasks to queue
-    if !conversion_tasks.is_empty() {
+    Ok(AddFilesWorkResult {
+        added_files,
+        conversion_tasks,
+        conversion_ids,
+        waveform_items,
+    })
+}
+
+#[tauri::command]
+async fn add_files_to_collection(
+    files: Vec<String>,
+    action: String,
+    normalize: bool,
+    state: State<'_, AppState>,
+) -> Result<CollectionResult, String> {
+    let folder_path = {
+        let state_path = state
+            .collection_path
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?;
+        state_path.as_ref().ok_or("No collection open")?.clone()
+    };
+    let folder_path_for_queue = folder_path.clone();
+
+    let work = tauri::async_runtime::spawn_blocking(move || {
+        add_files_blocking(folder_path, files, action)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    if !work.conversion_tasks.is_empty() {
         let mut tasks = state
             .waveform_queue
             .tasks
             .lock()
             .map_err(|_| "State poisoned")?;
-        for task in conversion_tasks {
+        for task in work.conversion_tasks {
             tasks.push_back(task);
         }
         state.waveform_queue.cvar.notify_all();
     }
 
-    // Queue missing waveforms
-    let waveform_ids =
-        queue_missing_waveforms(folder_path, &state.waveform_queue, normalize).unwrap_or_default();
+    let waveform_ids = queue_waveform_tasks(
+        &folder_path_for_queue,
+        &state.waveform_queue,
+        work.waveform_items,
+        normalize,
+    )
+    .unwrap_or_default();
 
-    let files = collection::get_all_files(folder_path, &conn).map_err(|e| e.to_string())?;
     Ok(CollectionResult {
-        files,
+        files: work.added_files,
         waveform_ids,
-        conversion_ids,
+        conversion_ids: work.conversion_ids,
     })
 }
 

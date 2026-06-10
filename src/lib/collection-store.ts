@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { remove } from '@tauri-apps/plugin-fs';
 import { audioPlayer } from './audio-player';
 import { settingsStore } from './settings-store';
-import { useCollectionVersion } from './store-sync';
+import { useCollectionVersion, useWaveformProgressVersion } from './store-sync';
 import { collectionDisplayName, collectionPathsEqual } from './collection-path';
 
 export interface FileItem {
@@ -60,10 +60,15 @@ class CollectionStore {
 	private activeLibraryTransferTaskId: string | null = null;
 	private pendingImportOpen = false;
 	private libraryProgressRaf: number | null = null;
+	private waveformProgressNotifyRaf: number | null = null;
 	private pendingLibraryProgress: { progress: number; message?: string } | null = null;
 	tasksPanelRequest = 0;
 	get displayedFiles() {
-		let result = [...this.files];
+		return this.computeDisplayedFiles(this.files);
+	}
+
+	computeDisplayedFiles(source: readonly FileItem[] = this.files) {
+		let result = [...source];
 
 		const query = settingsStore.filenameQuery.trim().toLowerCase();
 		if (query) {
@@ -143,20 +148,13 @@ class CollectionStore {
 				this.notify();
 			});
 
-			// Listen for waveform progress
-			// partialWaveforms is throttled to 50ms per file to limit SVG path rebuilds.
-			const lastPartialWrite: Record<string, number> = {};
 			listen('waveform-progress', (event) => {
 				const payload = event.payload as { id: string; progress: number; data?: number[] };
 				this.waveformProgress[payload.id] = payload.progress;
 				if (payload.data) {
-					const now = Date.now();
-					if (now - (lastPartialWrite[payload.id] ?? 0) >= 50) {
-						this.partialWaveforms[payload.id] = payload.data;
-						lastPartialWrite[payload.id] = now;
-					}
+					this.partialWaveforms[payload.id] = payload.data;
 				}
-				this.notify();
+				this.notifyWaveformProgress();
 			});
 
 			// Listen for waveform generation
@@ -213,6 +211,14 @@ class CollectionStore {
 
 	notify() {
 		useCollectionVersion.getState().bump();
+	}
+
+	notifyWaveformProgress() {
+		if (this.waveformProgressNotifyRaf !== null) return;
+		this.waveformProgressNotifyRaf = requestAnimationFrame(() => {
+			this.waveformProgressNotifyRaf = null;
+			useWaveformProgressVersion.getState().bump();
+		});
 	}
 
 	private setupLibraryTransferListeners() {
@@ -495,14 +501,10 @@ class CollectionStore {
 		return ` - ${mins}m ${secs}s remaining`;
 	}
 
-	private handleCollectionResult(result: {
-		files: Omit<FileItem, 'selected'>[];
+	private applyProcessingTasks(result: {
 		waveform_ids: string[];
 		conversion_ids: string[];
 	}) {
-		this.files = result.files.map((f) => ({ ...f, selected: false }));
-
-		// All these IDs will eventually need a waveform
 		const allProcessingIds = [...result.waveform_ids, ...result.conversion_ids];
 		if (allProcessingIds.length > 0) {
 			allProcessingIds.forEach((id) => this.processingFiles.add(id));
@@ -549,7 +551,27 @@ class CollectionStore {
 				});
 			}
 		}
+	}
+
+	private handleCollectionResult(result: {
+		files: Omit<FileItem, 'selected'>[];
+		waveform_ids: string[];
+		conversion_ids: string[];
+	}) {
+		this.files = result.files.map((f) => ({ ...f, selected: false }));
+		this.applyProcessingTasks(result);
 		this.notify();
+	}
+
+	private mergeAddedFiles(addedFiles: Omit<FileItem, 'selected'>[]) {
+		const existingPaths = new Set(this.files.map((f) => f.filepath));
+		const toAdd = addedFiles
+			.filter((f) => !existingPaths.has(f.filepath))
+			.map((f) => ({ ...f, selected: false }));
+
+		if (toAdd.length === 0) return;
+
+		this.files.push(...toAdd);
 	}
 
 	addTask(task: Task) {
@@ -738,7 +760,6 @@ class CollectionStore {
 		});
 
 		try {
-			this.loading = true;
 			const result = await invoke<{
 				files: Omit<FileItem, 'selected'>[];
 				waveform_ids: string[];
@@ -748,14 +769,14 @@ class CollectionStore {
 				action,
 				normalize
 			});
-			this.handleCollectionResult(result);
+			this.applyProcessingTasks(result);
+			this.mergeAddedFiles(result.files);
 			this.updateTask(taskId, { progress: 100, status: 'completed' });
 		} catch (e) {
 			console.error('Failed to add files', e);
 			this.updateTask(taskId, { status: 'failed', message: (e as Error).message });
 		} finally {
-			this.loading = false;
-			this.notify();
+			requestAnimationFrame(() => this.notify());
 		}
 	}
 

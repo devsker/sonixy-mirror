@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { audioPlayer } from '@/lib/audio-player';
 import { collectionStore } from '@/lib/collection-store';
 import { useExternalFileDrag } from '@/lib/use-external-file-drag';
-import { useStoreVersion, useCollectionVersion, useAudioVersion } from '@/lib/store-sync';
+import { useStoreVersion, useWaveformProgressVersion, useAudioVersion } from '@/lib/store-sync';
 
 type Props = {
 	height?: number | string;
@@ -17,7 +17,7 @@ export default function Waveform({
 	color = 'var(--icon-active)',
 	id = ''
 }: Props) {
-	useStoreVersion(useCollectionVersion);
+	useStoreVersion(useWaveformProgressVersion);
 	useStoreVersion(useAudioVersion);
 
 	const svgRef = useRef<SVGSVGElement>(null);

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
 	Minus,
 	Square,
@@ -35,6 +35,8 @@ const ALL_ELEMENTS = [
 
 type SectionKey = 'left' | 'center' | 'right';
 
+const TITLEBAR_DRAG_THRESHOLD_PX = 5;
+
 type TitlebarVisualizerProps = {
 	settings: SettingsStore;
 };
@@ -47,10 +49,19 @@ export function TitlebarVisualizer({ settings }: TitlebarVisualizerProps) {
 	const showLinuxWindowControls = usesLinuxWindowControls(titlebarStyle);
 	const pinWindowControlsLeft = windowControlsPinLeft(titlebarStyle);
 
-	const [draggedId, setDraggedId] = useState<string | null>(null);
-	const [draggedFromIndex, setDraggedFromIndex] = useState<number | null>(null);
 	const [dragOverSection, setDragOverSection] = useState<SectionKey | 'pool' | null>(null);
 	const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+	const titlebarDragRef = useRef<{
+		id: string;
+		fromIndex: number | null;
+		startX: number;
+		startY: number;
+		moved: boolean;
+	} | null>(null);
+	const dragOverRef = useRef<{
+		section: SectionKey | 'pool' | null;
+		index: number | null;
+	}>({ section: null, index: null });
 
 	const sections = useMemo(() => {
 		const result: Record<SectionKey, { id: string; index: number }[]> = {
@@ -76,46 +87,22 @@ export function TitlebarVisualizer({ settings }: TitlebarVisualizerProps) {
 	);
 
 	const resetDragState = () => {
-		setDraggedId(null);
-		setDraggedFromIndex(null);
+		titlebarDragRef.current = null;
+		dragOverRef.current = { section: null, index: null };
 		setDragOverSection(null);
 		setDragOverIndex(null);
 	};
 
-	const handleDragStart = (e: React.DragEvent, id: string, index: number | null) => {
-		setDraggedId(id);
-		setDraggedFromIndex(index);
-		if (e.dataTransfer) {
-			e.dataTransfer.setData('text/plain', id);
-			e.dataTransfer.effectAllowed = 'move';
-		}
-	};
-
-	const handleDragOver = (
-		e: React.DragEvent,
-		section: SectionKey | 'pool',
-		index: number | null = null
-	) => {
-		e.preventDefault();
-		if (e.dataTransfer) {
-			e.dataTransfer.dropEffect = 'move';
-		}
-		setDragOverSection(section);
-		setDragOverIndex(index);
-	};
-
-	const handleDrop = (
-		e: React.DragEvent,
+	const commitTitlebarDrop = (
+		sourceId: string,
+		sourceIndex: number | null,
 		targetSection: SectionKey | 'pool',
-		targetLocalIndex: number | null = null
+		targetLocalIndex: number | null
 	) => {
-		e.preventDefault();
-		if (!draggedId) return;
-
 		const newLayout = [...settings.titlebarLayout];
 
-		if (draggedFromIndex !== null) {
-			newLayout.splice(draggedFromIndex, 1);
+		if (sourceIndex !== null) {
+			newLayout.splice(sourceIndex, 1);
 		}
 
 		if (targetSection !== 'pool') {
@@ -139,13 +126,79 @@ export function TitlebarVisualizer({ settings }: TitlebarVisualizerProps) {
 				insertIndex = markerIndex + 1 + targetLocalIndex;
 			}
 
-			newLayout.splice(insertIndex, 0, draggedId);
+			newLayout.splice(insertIndex, 0, sourceId);
 		}
 
 		settings.titlebarLayout = newLayout;
 		settings.notify();
-		resetDragState();
 	};
+
+	const beginTitlebarDrag = (id: string, fromIndex: number | null, clientX: number, clientY: number) => {
+		titlebarDragRef.current = {
+			id,
+			fromIndex,
+			startX: clientX,
+			startY: clientY,
+			moved: false
+		};
+		setDragOverSection(null);
+		setDragOverIndex(null);
+		dragOverRef.current = { section: null, index: null };
+	};
+
+	const updateTitlebarDropTarget = (clientX: number, clientY: number) => {
+		const el = document.elementFromPoint(clientX, clientY);
+		const dropTarget = el?.closest<HTMLElement>('[data-titlebar-drop]');
+		if (!dropTarget) return;
+
+		const section = dropTarget.dataset.titlebarSection as SectionKey | 'pool' | undefined;
+		if (!section) return;
+
+		const indexStr = dropTarget.dataset.titlebarIndex;
+		const index =
+			indexStr === undefined || indexStr === '' ? null : Number.parseInt(indexStr, 10);
+
+		dragOverRef.current = { section, index };
+		setDragOverSection(section);
+		setDragOverIndex(index);
+	};
+
+	useEffect(() => {
+		const onMouseMove = (e: globalThis.MouseEvent) => {
+			const drag = titlebarDragRef.current;
+			if (!drag) return;
+
+			const dx = e.clientX - drag.startX;
+			const dy = e.clientY - drag.startY;
+			if (!drag.moved) {
+				if (dx * dx + dy * dy < TITLEBAR_DRAG_THRESHOLD_PX * TITLEBAR_DRAG_THRESHOLD_PX) return;
+				drag.moved = true;
+			}
+
+			updateTitlebarDropTarget(e.clientX, e.clientY);
+		};
+
+		const onMouseUp = () => {
+			const drag = titlebarDragRef.current;
+			if (!drag) return;
+
+			if (drag.moved) {
+				const { section, index } = dragOverRef.current;
+				if (section) {
+					commitTitlebarDrop(drag.id, drag.fromIndex, section, index);
+				}
+			}
+
+			resetDragState();
+		};
+
+		window.addEventListener('mousemove', onMouseMove);
+		window.addEventListener('mouseup', onMouseUp);
+		return () => {
+			window.removeEventListener('mousemove', onMouseMove);
+			window.removeEventListener('mouseup', onMouseUp);
+		};
+	}, [settings.titlebarLayout]);
 
 	const removeElement = (index: number) => {
 		const newLayout = [...settings.titlebarLayout];
@@ -274,7 +327,7 @@ export function TitlebarVisualizer({ settings }: TitlebarVisualizerProps) {
 	};
 
 	return (
-		<div className="titlebar-visualizer" role="presentation" onDragEnd={resetDragState}>
+		<div className="titlebar-visualizer" role="presentation">
 			<div className="titlebar-mock">
 				{pinWindowControlsLeft && (
 					<div className="titlebar-pinned titlebar-pinned-left">{windowControls}</div>
@@ -285,25 +338,22 @@ export function TitlebarVisualizer({ settings }: TitlebarVisualizerProps) {
 					return (
 						<div
 							key={section}
+							data-titlebar-drop
+							data-titlebar-section={section}
 							className={`titlebar-section ${sectionAreaClass[section]} droppable-section${dragOverSection === section && dragOverIndex === null ? ' droppable-section-drag-over' : ''}`}
 							role="presentation"
-							onDragOver={(e) => handleDragOver(e, section)}
-							onDrop={(e) => handleDrop(e, section)}
 						>
 							{sectionData.map((item, i) => (
 								<div
 									key={`${item.index}-${item.id}`}
+									data-titlebar-drop
+									data-titlebar-section={section}
+									data-titlebar-index={i}
 									className={`element-wrapper${dragOverSection === section && dragOverIndex === i ? ' drop-target' : ''}`}
 									role="presentation"
-									draggable
-									onDragStart={(e) => handleDragStart(e, item.id, item.index)}
-									onDragOver={(e) => {
-										e.stopPropagation();
-										handleDragOver(e, section, i);
-									}}
-									onDrop={(e) => {
-										e.stopPropagation();
-										handleDrop(e, section, i);
+									onMouseDown={(e) => {
+										if (e.button !== 0) return;
+										beginTitlebarDrag(item.id, item.index, e.clientX, e.clientY);
 									}}
 								>
 									{renderPreviewElement(item.id)}
@@ -329,10 +379,10 @@ export function TitlebarVisualizer({ settings }: TitlebarVisualizerProps) {
 
 			<div className="pool-container">
 				<div
+					data-titlebar-drop
+					data-titlebar-section="pool"
 					className={`element-pool${dragOverSection === 'pool' ? ' element-pool-drag-over' : ''}`}
 					role="presentation"
-					onDragOver={(e) => handleDragOver(e, 'pool')}
-					onDrop={(e) => handleDrop(e, 'pool')}
 				>
 					<div className="pool-label">Available:</div>
 					{availableElements.map((el, i) => {
@@ -342,9 +392,11 @@ export function TitlebarVisualizer({ settings }: TitlebarVisualizerProps) {
 								key={`${el.id}-${i}`}
 								className="pool-item"
 								role="presentation"
-								draggable
 								title={el.label}
-								onDragStart={(e) => handleDragStart(e, el.id, null)}
+								onMouseDown={(e) => {
+									if (e.button !== 0) return;
+									beginTitlebarDrag(el.id, null, e.clientX, e.clientY);
+								}}
 							>
 								{Icon ? (
 									<Icon size={14} />

@@ -11,6 +11,11 @@ export const useCollectionVersion = create<{ version: number; bump: () => void }
 	bump: () => set((s) => ({ version: s.version + 1 }))
 }));
 
+export const useWaveformProgressVersion = create<{ version: number; bump: () => void }>((set) => ({
+	version: 0,
+	bump: () => set((s) => ({ version: s.version + 1 }))
+}));
+
 export const useAudioVersion = create<{ version: number; bump: () => void }>((set) => ({
 	version: 0,
 	bump: () => set((s) => ({ version: s.version + 1 }))

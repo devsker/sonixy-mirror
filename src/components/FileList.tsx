@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { memo, useDeferredValue, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
 	ChevronUp,
 	ChevronDown,
@@ -11,6 +12,7 @@ import {
 	Circle,
 	Tag,
 	Plus,
+	Upload,
 	X
 } from 'lucide-react';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -23,10 +25,14 @@ import {
 	useStoreVersion,
 	useCollectionVersion,
 	useSettingsVersion,
-	useAudioVersion
+	useAudioVersion,
+	useWaveformProgressVersion
 } from '@/lib/store-sync';
 import { useExternalFileDrag } from '@/lib/use-external-file-drag';
 import type { ExternalFileDragOptions } from '@/lib/file-drag';
+import { filterExternalDropPaths, isPhysicalPointInElement } from '@/lib/external-drop';
+
+const COLUMN_DRAG_THRESHOLD_PX = 5;
 
 const columnConfigs: Record<
 	string,
@@ -47,19 +53,59 @@ type FileListProps = {
 	onSelectionChange?: (ids: string[]) => void;
 };
 
+function FileProcessingIndicatorActive({ fileId }: { fileId: string }) {
+	useStoreVersion(useWaveformProgressVersion);
+
+	const progress = collectionStore.waveformProgress[fileId] || 0;
+	const processingPaused = collectionStore.processingPaused;
+
+	return (
+		<span
+			className={`processing-icon${processingPaused ? ' processing-icon-paused' : ''}`}
+			title="Processing..."
+		>
+			<svg className="progress-circle" viewBox="0 0 16 16">
+				<circle className="bg" cx="8" cy="8" r="6" />
+				<circle
+					className="fg"
+					cx="8"
+					cy="8"
+					r="6"
+					strokeDasharray={2 * Math.PI * 6}
+					strokeDashoffset={2 * Math.PI * 6 * (1 - progress)}
+				/>
+			</svg>
+		</span>
+	);
+}
+
+function FileProcessingIndicator({ fileId }: { fileId: string }) {
+	useStoreVersion(useCollectionVersion);
+
+	if (!collectionStore.processingFiles.has(fileId)) return null;
+
+	if (collectionStore.currentlyProcessingIds.has(fileId)) {
+		return <FileProcessingIndicatorActive fileId={fileId} />;
+	}
+
+	return (
+		<span
+			className={`processing-icon processing-icon-queued${collectionStore.processingPaused ? ' processing-icon-paused' : ''}`}
+			title="Queued"
+		>
+			<Circle size={10} strokeWidth={3} />
+		</span>
+	);
+}
+
 type FileRowProps = {
 	file: FileItem;
 	index: number;
 	showCheckboxes: boolean;
 	columnOrder: string[];
 	collectionPath: string | null;
-	files: FileItem[];
 	taggingFileId: string | null;
 	newTagValue: string;
-	processingFiles: Set<string>;
-	currentlyProcessingIds: Set<string>;
-	waveformProgress: Record<string, number>;
-	processingPaused: boolean;
 	onTagInputRef: (el: HTMLInputElement | null) => void;
 	onNewTagValueChange: (value: string) => void;
 	onSelection: (event: MouseEvent, index: number) => void;
@@ -70,19 +116,14 @@ type FileRowProps = {
 	onStartTagging: (file: FileItem) => void;
 };
 
-function FileRow({
+const FileRow = memo(function FileRow({
 	file,
 	index,
 	showCheckboxes,
 	columnOrder,
 	collectionPath,
-	files,
 	taggingFileId,
 	newTagValue,
-	processingFiles,
-	currentlyProcessingIds,
-	waveformProgress,
-	processingPaused,
 	onTagInputRef,
 	onNewTagValueChange,
 	onSelection,
@@ -96,7 +137,7 @@ function FileRow({
 		disabled: () => file.missing || !collectionPath,
 		getPaths: () => {
 			if (file.missing || !collectionPath) return [];
-			const selectedFiles = files.filter((f) => f.selected && !f.missing);
+			const selectedFiles = collectionStore.files.filter((f) => f.selected && !f.missing);
 			if (file.selected) {
 				return selectedFiles.map((f) => `${collectionPath}/${f.filepath}`.replace(/[/\\]+/g, '/'));
 			}
@@ -107,7 +148,6 @@ function FileRow({
 	const setRowRef = useExternalFileDrag(dragOptions);
 
 	const isLocked = collectionStore.isLocked(file.id);
-	const progress = waveformProgress[file.id] || 0;
 
 	return (
 		<tr
@@ -135,28 +175,7 @@ function FileRow({
 					return (
 						<td key={columnId} className="filename-col" title={file.filename}>
 							<div className="name-wrapper">
-								{processingFiles.has(file.id) && (
-									<span
-										className={`processing-icon${!currentlyProcessingIds.has(file.id) ? ' processing-icon-queued' : ''}${processingPaused ? ' processing-icon-paused' : ''}`}
-										title={currentlyProcessingIds.has(file.id) ? 'Processing...' : 'Queued'}
-									>
-										{currentlyProcessingIds.has(file.id) ? (
-											<svg className="progress-circle" viewBox="0 0 16 16">
-												<circle className="bg" cx="8" cy="8" r="6" />
-												<circle
-													className="fg"
-													cx="8"
-													cy="8"
-													r="6"
-													strokeDasharray={2 * Math.PI * 6}
-													strokeDashoffset={2 * Math.PI * 6 * (1 - progress)}
-												/>
-											</svg>
-										) : (
-											<Circle size={10} strokeWidth={3} />
-										)}
-									</span>
-								)}
+								<FileProcessingIndicator fileId={file.id} />
 								{file.missing && (
 									<span className="warning-icon" title="File not found">
 										<AlertTriangle size={14} />
@@ -290,24 +309,19 @@ function FileRow({
 			})}
 		</tr>
 	);
-}
+});
 
 export function FileList({ onSelectionChange }: FileListProps) {
 	const collectionTick = useStoreVersion(useCollectionVersion);
 	const settingsTick = useStoreVersion(useSettingsVersion);
 	const audioTick = useStoreVersion(useAudioVersion);
-	void settingsTick;
 
 	const files = collectionStore.files;
+	const deferredFiles = useDeferredValue(files);
 	const loading = collectionStore.loading;
 	const showSwitchingUi = collectionStore.showSwitchingUi;
 	const switchingToPath = collectionStore.switchingToPath;
 	const collectionPath = collectionStore.collectionPath;
-	const processingFiles = collectionStore.processingFiles;
-	const currentlyProcessingIds = collectionStore.currentlyProcessingIds;
-	const waveformProgress = collectionStore.waveformProgress;
-	const processingPaused = collectionStore.processingPaused;
-
 	const showCheckboxes = settingsStore.showCheckboxes;
 	const sortColumn = settingsStore.sortColumn;
 	const sortDirection = settingsStore.sortDirection;
@@ -315,7 +329,10 @@ export function FileList({ onSelectionChange }: FileListProps) {
 	const selectedTags = settingsStore.selectedTags;
 	const columnOrder = settingsStore.columnOrder;
 
-	const displayedFiles = collectionStore.displayedFiles;
+	const displayedFiles = useMemo(
+		() => collectionStore.computeDisplayedFiles(deferredFiles),
+		[deferredFiles, collectionTick, settingsTick]
+	);
 	const selectedIds = useMemo(
 		() => collectionStore.files.filter((f) => f.selected).map((f) => f.id),
 		[collectionTick]
@@ -331,12 +348,23 @@ export function FileList({ onSelectionChange }: FileListProps) {
 	const [lastSelectedIndex, setLastSelectedIndex] = useState(-1);
 	const [draggingColumn, setDraggingColumn] = useState<string | null>(null);
 	const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
+	const columnDragRef = useRef<{
+		sourceId: string;
+		startX: number;
+		startY: number;
+		moved: boolean;
+	} | null>(null);
+	const columnDidDragRef = useRef(false);
+	const dragOverColumnRef = useRef<string | null>(null);
 
 	const [fileToRemove, setFileToRemove] = useState<FileItem | null>(null);
 	const [taggingFile, setTaggingFile] = useState<FileItem | null>(null);
 	const [newTagValue, setNewTagValue] = useState('');
 	const tagInputRef = useRef<HTMLInputElement | null>(null);
 	const selectAllRef = useRef<HTMLInputElement | null>(null);
+	const dropTargetRef = useRef<HTMLDivElement | null>(null);
+	const externalDragActiveRef = useRef(false);
+	const [dropHover, setDropHover] = useState(false);
 
 	const [batchTagMode, setBatchTagMode] = useState<'add' | 'remove' | null>(null);
 	const [batchTagIds, setBatchTagIds] = useState<string[]>([]);
@@ -346,6 +374,55 @@ export function FileList({ onSelectionChange }: FileListProps) {
 	useEffect(() => {
 		onSelectionChange?.(selectedIds);
 	}, [collectionTick, onSelectionChange, selectedIds]);
+
+	useEffect(() => {
+		if (!collectionPath || showSwitchingUi) {
+			externalDragActiveRef.current = false;
+			setDropHover(false);
+			return;
+		}
+
+		const appWindow = getCurrentWindow();
+		const unlistenPromise = appWindow.onDragDropEvent((event) => {
+			if (collectionStore.isDraggingFromApp) return;
+
+			const dropTarget = dropTargetRef.current;
+			if (!dropTarget) return;
+
+			const { payload } = event;
+
+			if (payload.type === 'leave') {
+				externalDragActiveRef.current = false;
+				setDropHover(false);
+				return;
+			}
+
+			if (payload.type === 'drop') {
+				externalDragActiveRef.current = false;
+				setDropHover(false);
+				return;
+			}
+
+			if (payload.type === 'enter') {
+				const paths = filterExternalDropPaths(payload.paths, collectionPath);
+				externalDragActiveRef.current = paths.length > 0;
+				if (!externalDragActiveRef.current) {
+					setDropHover(false);
+					return;
+				}
+			} else if (payload.type !== 'over' || !externalDragActiveRef.current) {
+				return;
+			}
+
+			setDropHover(
+				isPhysicalPointInElement(dropTarget, payload.position.x, payload.position.y)
+			);
+		});
+
+		return () => {
+			void unlistenPromise.then((unlisten) => unlisten());
+		};
+	}, [collectionPath, showSwitchingUi]);
 
 	useEffect(() => {
 		const currentFileId = audioPlayer.currentFileId;
@@ -518,57 +595,79 @@ export function FileList({ onSelectionChange }: FileListProps) {
 		]);
 	};
 
-	const handleDragStart = (event: React.DragEvent, id: string) => {
-		setDraggingColumn(id);
-		setDragOverColumn(null);
-		if (event.dataTransfer) {
-			event.dataTransfer.effectAllowed = 'move';
-			event.dataTransfer.setData('text/plain', id);
-		}
-	};
-
-	const handleDragOver = (event: React.DragEvent, targetId: string) => {
-		event.preventDefault();
-		if (event.dataTransfer) {
-			event.dataTransfer.dropEffect = 'move';
-		}
-		setDragOverColumn(targetId);
-	};
-
-	const handleDrop = (event: React.DragEvent, targetId: string) => {
-		event.preventDefault();
-		if (!draggingColumn || draggingColumn === targetId) {
-			setDragOverColumn(null);
-			return;
-		}
-
-		const fromIndex = columnOrder.indexOf(draggingColumn);
+	const reorderColumns = (sourceId: string, targetId: string) => {
+		const fromIndex = columnOrder.indexOf(sourceId);
 		const toIndex = columnOrder.indexOf(targetId);
-		if (fromIndex === -1 || toIndex === -1) {
-			setDragOverColumn(null);
-			return;
-		}
+		if (fromIndex === -1 || toIndex === -1 || sourceId === targetId) return;
 
 		const newOrder = [...columnOrder];
 		newOrder.splice(fromIndex, 1);
-		newOrder.splice(toIndex, 0, draggingColumn);
+		newOrder.splice(toIndex, 0, sourceId);
 		settingsStore.columnOrder = newOrder;
 		settingsStore.notify();
-		setDragOverColumn(null);
 	};
 
-	const handleDragEnd = () => {
-		setDraggingColumn(null);
+	const beginColumnDrag = (columnId: string, clientX: number, clientY: number) => {
+		columnDragRef.current = {
+			sourceId: columnId,
+			startX: clientX,
+			startY: clientY,
+			moved: false
+		};
+		setDraggingColumn(columnId);
 		setDragOverColumn(null);
+		dragOverColumnRef.current = null;
 	};
 
-	const handleDragLeave = (event: React.DragEvent, columnId: string) => {
-		const next = event.relatedTarget as Node | null;
-		const current = event.currentTarget as Node | null;
-		if (dragOverColumn === columnId && (!current || !next || !current.contains(next))) {
+	useEffect(() => {
+		dragOverColumnRef.current = dragOverColumn;
+	}, [dragOverColumn]);
+
+	useEffect(() => {
+		const onMouseMove = (e: globalThis.MouseEvent) => {
+			const drag = columnDragRef.current;
+			if (!drag) return;
+
+			const dx = e.clientX - drag.startX;
+			const dy = e.clientY - drag.startY;
+			if (!drag.moved) {
+				if (dx * dx + dy * dy < COLUMN_DRAG_THRESHOLD_PX * COLUMN_DRAG_THRESHOLD_PX) return;
+				drag.moved = true;
+			}
+
+			const el = document.elementFromPoint(e.clientX, e.clientY);
+			const th = el?.closest<HTMLElement>('th[data-column-id]');
+			const targetId = th?.dataset.columnId;
+			if (targetId) {
+				setDragOverColumn((prev) => (prev === targetId ? prev : targetId));
+			}
+		};
+
+		const onMouseUp = () => {
+			const drag = columnDragRef.current;
+			if (!drag) return;
+
+			if (drag.moved) {
+				columnDidDragRef.current = true;
+				const targetId = dragOverColumnRef.current;
+				if (targetId) {
+					reorderColumns(drag.sourceId, targetId);
+				}
+			}
+
+			columnDragRef.current = null;
+			setDraggingColumn(null);
 			setDragOverColumn(null);
-		}
-	};
+			dragOverColumnRef.current = null;
+		};
+
+		window.addEventListener('mousemove', onMouseMove);
+		window.addEventListener('mouseup', onMouseUp);
+		return () => {
+			window.removeEventListener('mousemove', onMouseMove);
+			window.removeEventListener('mouseup', onMouseUp);
+		};
+	}, [columnOrder]);
 
 	const toggleSort = (col: string) => {
 		if (settingsStore.sortColumn === col) {
@@ -823,12 +922,43 @@ export function FileList({ onSelectionChange }: FileListProps) {
 				</div>
 			)}
 
-			<div
-				className="file-list-container"
-				role="presentation"
-				onContextMenu={containerContextMenu}
-			>
-				{!collectionPath ? (
+			<div className="file-list-container" role="presentation" onContextMenu={containerContextMenu}>
+				{collectionPath &&
+					!showSwitchingUi &&
+					!(loading && files.length === 0) &&
+					files.length > 0 && (
+						<div className="file-list-toolbar">
+							<input
+								type="search"
+								className="filename-search"
+								placeholder="Filter by filename…"
+								value={settingsStore.filenameQuery}
+								onInput={(e) => {
+									settingsStore.filenameQuery = e.currentTarget.value;
+									settingsStore.notify();
+								}}
+								onKeyDown={(e) => {
+									if (e.key === 'Escape') {
+										settingsStore.filenameQuery = '';
+										settingsStore.notify();
+										e.currentTarget.blur();
+									}
+								}}
+							/>
+						</div>
+					)}
+				<div
+					ref={dropTargetRef}
+					className={`file-list-drop-target${dropHover ? ' file-list-drop-hover' : ''}`}
+				>
+					{dropHover && (
+						<div className="file-list-drop-overlay" aria-hidden>
+							<Upload size={40} strokeWidth={1.5} />
+							<strong>Drop to add files</strong>
+							<span>Files will be copied or moved into this collection</span>
+						</div>
+					)}
+					{!collectionPath ? (
 					<div className="empty-state">
 						<FolderOpen size={48} />
 						<h2>No collection open</h2>
@@ -859,27 +989,7 @@ export function FileList({ onSelectionChange }: FileListProps) {
 						<p>Try adding some audio files to the folder or drag them here</p>
 					</div>
 				) : (
-					<>
-						<div className="file-list-toolbar">
-							<input
-								type="search"
-								className="filename-search"
-								placeholder="Filter by filename…"
-								value={settingsStore.filenameQuery}
-								onInput={(e) => {
-									settingsStore.filenameQuery = e.currentTarget.value;
-									settingsStore.notify();
-								}}
-								onKeyDown={(e) => {
-									if (e.key === 'Escape') {
-										settingsStore.filenameQuery = '';
-										settingsStore.notify();
-										e.currentTarget.blur();
-									}
-								}}
-							/>
-						</div>
-						<table
+					<table
 							className={`file-table${!showCheckboxes ? ' file-table-no-checkboxes' : ''}`}
 						>
 							<thead>
@@ -902,10 +1012,19 @@ export function FileList({ onSelectionChange }: FileListProps) {
 										return (
 											<th
 												key={columnId}
+												data-column-id={columnId}
 												className={`${columnId}-col${config.sortable ? ' sortable-th' : ''}${config.filterable ? ' filterable-th' : ''}${draggingColumn === columnId ? ' dragging-th' : ''}${dragOverColumn === columnId && draggingColumn !== columnId ? ' drop-target-th' : ''}`}
 												onClick={(e) => {
+													if (columnDidDragRef.current) {
+														columnDidDragRef.current = false;
+														return;
+													}
 													if (config.sortable) toggleSort(columnId);
 													else if (config.filterable) toggleFilterPopover(config.filterable, e);
+												}}
+												onMouseDown={(e) => {
+													if (e.button !== 0) return;
+													beginColumnDrag(columnId, e.clientX, e.clientY);
 												}}
 												onKeyDown={(e) => {
 													if (e.key === 'Enter') {
@@ -914,13 +1033,6 @@ export function FileList({ onSelectionChange }: FileListProps) {
 															toggleFilterPopover(config.filterable, e as unknown as MouseEvent);
 													}
 												}}
-												draggable
-												onDragStart={(e) => handleDragStart(e, columnId)}
-												onDragOver={(e) => handleDragOver(e, columnId)}
-												onDragEnter={(e) => e.preventDefault()}
-												onDrop={(e) => handleDrop(e, columnId)}
-												onDragLeave={(e) => handleDragLeave(e, columnId)}
-												onDragEnd={handleDragEnd}
 												role="button"
 												tabIndex={0}
 											>
@@ -1035,13 +1147,8 @@ export function FileList({ onSelectionChange }: FileListProps) {
 										showCheckboxes={showCheckboxes}
 										columnOrder={columnOrder}
 										collectionPath={collectionPath}
-										files={files}
 										taggingFileId={taggingFile?.id ?? null}
 										newTagValue={newTagValue}
-										processingFiles={processingFiles}
-										currentlyProcessingIds={currentlyProcessingIds}
-										waveformProgress={waveformProgress}
-										processingPaused={processingPaused}
 										onTagInputRef={(el) => {
 											tagInputRef.current = el;
 										}}
@@ -1058,9 +1165,9 @@ export function FileList({ onSelectionChange }: FileListProps) {
 									/>
 								))}
 							</tbody>
-						</table>
-					</>
+					</table>
 				)}
+				</div>
 			</div>
 		</>
 	);

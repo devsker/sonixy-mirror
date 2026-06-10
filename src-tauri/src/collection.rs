@@ -199,6 +199,10 @@ pub fn update_tags(
 
 use rayon::prelude::*;
 
+fn is_normalize_temp_filename(name: &str) -> bool {
+    name.contains(".normalized.")
+}
+
 pub fn scan_folder(
     folder_path: &Path,
     conn: &Connection,
@@ -208,7 +212,10 @@ pub fn scan_folder(
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
-        .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy();
+            !name.starts_with('.') && !is_normalize_temp_filename(&name)
+        })
         .collect();
 
     // 2. Filter out files already in DB (this part is still sequential but fast)
@@ -402,8 +409,11 @@ where
 
 pub fn normalize_file_destructive(path: &Path) -> Result<(), String> {
     let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("wav");
-    let mut temp_path = path.to_path_buf();
-    temp_path.set_extension(format!("normalized.{}", extension));
+    let temp_path = std::env::temp_dir().join(format!(
+        "sonixy-normalize-{}.{}",
+        Uuid::new_v4(),
+        extension
+    ));
 
     // Use ffmpeg's loudnorm filter for EBU R128 normalization
     let output = create_ffmpeg_command()?
@@ -411,19 +421,21 @@ pub fn normalize_file_destructive(path: &Path) -> Result<(), String> {
         .arg(path)
         .arg("-af")
         .arg("loudnorm=I=-16:TP=-1.5:LRA=11") // Target -16 LUFS, -1.5dB TP
-        .arg("-y") // Overwrite temp if exists
+        .arg("-y")
         .arg(&temp_path)
         .output()
         .map_err(|e| format!("Failed to execute ffmpeg: {}", e))?;
 
     if !output.status.success() {
+        let _ = std::fs::remove_file(&temp_path);
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("ffmpeg error: {}", stderr));
     }
 
-    // Replace original file with normalized one
-    std::fs::rename(&temp_path, path)
-        .map_err(|e| format!("Failed to replace original file: {}", e))?;
+    if let Err(e) = std::fs::rename(&temp_path, path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(format!("Failed to replace original file: {}", e));
+    }
 
     Ok(())
 }
@@ -509,8 +521,6 @@ where
     let track_id = track.id;
     let bars: usize = 512;
     let mut current_bars = vec![0.0f32; bars];
-    // Reused buffer for progress events — avoids 100 heap allocations per file.
-    let mut partial_data = vec![0u8; bars];
 
     // Pre-compute bar start frames when total is known, eliminating per-sample division.
     let bar_starts: Option<Vec<u64>> = total_frames.map(|total| {
@@ -576,12 +586,9 @@ where
                         _ => {}
                     }
 
-                    // Report progress every 1% change to avoid flooding
-                    if (progress - last_progress).abs() >= 0.01 {
-                        for (b, &v) in partial_data.iter_mut().zip(current_bars.iter()) {
-                            *b = (v * 255.0).min(255.0) as u8;
-                        }
-                        on_progress(progress, Some(partial_data.clone()));
+                    // Report progress every 2% — omit partial waveform bytes to keep IPC light.
+                    if (progress - last_progress).abs() >= 0.02 {
+                        on_progress(progress, None);
                         last_progress = progress;
                     }
                 } else {

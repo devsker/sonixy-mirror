@@ -14,6 +14,7 @@ import { audioPlayer } from '@/lib/audio-player';
 import { settingsStore } from '@/lib/settings-store';
 import { preloadDragIcon } from '@/lib/file-drag';
 import { checkForUpdatesOnStartup } from '@/lib/updater';
+import { filterExternalDropPaths } from '@/lib/external-drop';
 import { useStoreVersion, useCollectionVersion, useSettingsVersion } from '@/lib/store-sync';
 
 function applyTheme(value: string) {
@@ -63,19 +64,10 @@ export default function App() {
 			if (collectionStore.isDraggingFromApp) return;
 
 			if (event.payload.type === 'drop' && collectionStore.collectionPath) {
-				const collectionPath = collectionStore.collectionPath.replace(/[/\\]+/g, '/');
-				const filteredPaths = event.payload.paths.filter((path) => {
-					const normalizedPath = path.replace(/[/\\]+/g, '/');
-					if (normalizedPath === collectionPath) return false;
-					if (
-						normalizedPath.startsWith(
-							collectionPath.endsWith('/') ? collectionPath : `${collectionPath}/`
-						)
-					) {
-						return false;
-					}
-					return true;
-				});
+				const filteredPaths = filterExternalDropPaths(
+					event.payload.paths,
+					collectionStore.collectionPath
+				);
 
 				if (filteredPaths.length > 0) {
 					setDropPaths(filteredPaths);
@@ -161,62 +153,18 @@ export default function App() {
 		if (showDropPrompt) handleDropCancel();
 	}
 
-	function handleDomDragOver(e: DragEvent) {
-		if (collectionStore.isDraggingFromApp) return;
-		if (!collectionStore.collectionPath) return;
-		if (!e.dataTransfer) return;
-		e.preventDefault();
-		e.dataTransfer.dropEffect = 'copy';
-	}
-
-	function handleDomDrop(e: DragEvent) {
-		if (collectionStore.isDraggingFromApp) return;
-		if (!collectionStore.collectionPath) return;
-		if (!e.dataTransfer) return;
-
-		e.preventDefault();
-
-		const collectionPath = collectionStore.collectionPath.replace(/[/\\]+/g, '/');
-		const droppedPaths = Array.from(e.dataTransfer.files)
-			.map((file) => (file as File & { path?: string }).path)
-			.filter((p): p is string => typeof p === 'string' && p.length > 0)
-			.filter((path) => {
-				const normalizedPath = path.replace(/[/\\]+/g, '/');
-				if (normalizedPath === collectionPath) return false;
-				if (
-					normalizedPath.startsWith(
-						collectionPath.endsWith('/') ? collectionPath : `${collectionPath}/`
-					)
-				) {
-					return false;
-				}
-				return true;
-			});
-
-		if (droppedPaths.length > 0) {
-			setDropPaths(droppedPaths);
-			setShowDropPrompt(true);
-		}
-	}
-
 	useEffect(() => {
 		const onKeydown = (e: KeyboardEvent) => handleKeydown(e);
 		const onClick = () => closeDropPrompt();
-		const onDragOver = (e: DragEvent) => handleDomDragOver(e);
-		const onDrop = (e: DragEvent) => handleDomDrop(e);
 		const onContextMenu = (e: MouseEvent) => e.preventDefault();
 
 		window.addEventListener('keydown', onKeydown);
 		window.addEventListener('click', onClick);
-		window.addEventListener('dragover', onDragOver);
-		window.addEventListener('drop', onDrop);
 		window.addEventListener('contextmenu', onContextMenu);
 
 		return () => {
 			window.removeEventListener('keydown', onKeydown);
 			window.removeEventListener('click', onClick);
-			window.removeEventListener('dragover', onDragOver);
-			window.removeEventListener('drop', onDrop);
 			window.removeEventListener('contextmenu', onContextMenu);
 		};
 	});
