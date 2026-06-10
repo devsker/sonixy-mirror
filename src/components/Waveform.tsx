@@ -21,11 +21,10 @@ export default function Waveform({
 	const audioVersion = useStoreVersion(useAudioVersion);
 
 	const svgRef = useRef<SVGSVGElement>(null);
+	const preparedSelectionRef = useRef<string | null>(null);
 
 	const [waveformData, setWaveformData] = useState<number[] | null>(null);
 	const [isLoading, setIsLoading] = useState(true);
-	const [selectionStart, setSelectionStart] = useState<number | null>(null);
-	const [selectionEnd, setSelectionEnd] = useState<number | null>(null);
 	const [dragStartPos, setDragStartPos] = useState<number | null>(null);
 	const [currentPos, setCurrentPos] = useState<number | null>(null);
 	const [hoverPos, setHoverPos] = useState<number | null>(null);
@@ -61,12 +60,20 @@ export default function Waveform({
 	}, [id]);
 
 	useEffect(() => {
+		audioPlayer.setWaveformFileId(id || null);
+		return () => {
+			if (audioPlayer.waveformFileId === id) {
+				audioPlayer.setWaveformFileId(null);
+			}
+		};
+	}, [id]);
+
+	useEffect(() => {
 		setIsLoading(true);
-		setSelectionStart(null);
-		setSelectionEnd(null);
 		setDragClipPath(null);
 		setPlayProgress(0);
-		audioPlayer.clearAbLoop();
+		preparedSelectionRef.current = null;
+		audioPlayer.clearSelection();
 		void fetchWaveform();
 	}, [id, fetchWaveform]);
 
@@ -133,6 +140,13 @@ export default function Waveform({
 		return topParts.join('') + bottomParts.reverse().join('') + 'Z';
 	}, [data, waveformData, isLoading, progress]);
 
+	const selectionMarkers = useMemo(() => {
+		if (audioPlayer.selectionFileId !== id) {
+			return { in: null as number | null, out: null as number | null };
+		}
+		return { in: audioPlayer.selectionIn, out: audioPlayer.selectionOut };
+	}, [id, audioVersion]);
+
 	const currentSelection = useMemo(() => {
 		if (isDragging && dragStartPos !== null && currentPos !== null && svgRef.current) {
 			const rect = svgRef.current.getBoundingClientRect();
@@ -141,37 +155,59 @@ export default function Waveform({
 			const p2 = getPct(currentPos);
 			return { start: Math.min(p1, p2), end: Math.max(p1, p2) };
 		}
-		if (selectionStart !== null && selectionEnd !== null) {
-			return { start: selectionStart, end: selectionEnd };
+		if (audioPlayer.selectionFileId === id && audioPlayer.selectionRange) {
+			return audioPlayer.selectionRange;
 		}
 		return null;
-	}, [isDragging, dragStartPos, currentPos, selectionStart, selectionEnd]);
+	}, [isDragging, dragStartPos, currentPos, id, audioVersion]);
 
 	const setSelectionDragRef = useExternalFileDrag({
 		disabled: () => !dragClipPath || isPreparingClip,
 		getPaths: () => (dragClipPath ? [dragClipPath] : [])
 	});
 
-	function applySelectionAbLoop(start: number, end: number) {
-		audioPlayer.setAbLoop(start, end);
-		const file = collectionStore.files.find((f) => f.id === id);
-		if (!file || file.missing) return;
-		if (audioPlayer.currentFileId !== id) {
-			void audioPlayer.play(file);
-		} else {
-			void audioPlayer.seek(start);
+	useEffect(() => {
+		const range =
+			audioPlayer.selectionFileId === id ? audioPlayer.selectionRange : null;
+		const key = range ? `${range.start}:${range.end}` : null;
+
+		if (key === preparedSelectionRef.current) return;
+		preparedSelectionRef.current = key;
+
+		if (!range) {
+			setDragClipPath(null);
+			return;
 		}
-	}
+
+		let cancelled = false;
+		setIsPreparingClip(true);
+		invoke<string>('prepare_drag_clip', {
+			id,
+			startPct: range.start,
+			endPct: range.end
+		})
+			.then((clipPath) => {
+				if (!cancelled) setDragClipPath(clipPath);
+			})
+			.catch((err) => {
+				console.error('Failed to prepare drag clip:', err);
+			})
+			.finally(() => {
+				if (!cancelled) setIsPreparingClip(false);
+			});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [id, audioVersion]);
 
 	function onMouseDown(e: React.MouseEvent) {
 		if (e.button !== 0 || isLocked) return;
 		if ((e.target as Element).closest('.selection-rect')) return;
-		audioPlayer.clearAbLoop();
+		audioPlayer.clearSelection();
 		setDragStartPos(e.clientX);
 		setCurrentPos(e.clientX);
 		setIsDragging(true);
-		setSelectionStart(null);
-		setSelectionEnd(null);
 		setDragClipPath(null);
 	}
 
@@ -200,23 +236,8 @@ export default function Waveform({
 			const p2 = getPct(e.clientX);
 			const start = Math.min(p1, p2);
 			const end = Math.max(p1, p2);
-			setSelectionStart(start);
-			setSelectionEnd(end);
 			if (end - start > 0.001) {
-				applySelectionAbLoop(start, end);
-				setIsPreparingClip(true);
-				try {
-					const clipPath = await invoke<string>('prepare_drag_clip', {
-						id,
-						startPct: start,
-						endPct: end
-					});
-					setDragClipPath(clipPath);
-				} catch (err) {
-					console.error('Failed to prepare drag clip:', err);
-				} finally {
-					setIsPreparingClip(false);
-				}
+				audioPlayer.setSelection(start, end, id);
 			}
 		}
 		setDragStartPos(null);
@@ -303,6 +324,32 @@ export default function Waveform({
 						className={`waveform-path played${!waveformData && isLoading ? ' no-transition' : ''}`}
 					/>
 				</g>
+
+				{selectionMarkers.in !== null && selectionMarkers.out === null && (
+					<line
+						x1={selectionMarkers.in * barsCount * 3}
+						y1="0"
+						x2={selectionMarkers.in * barsCount * 3}
+						y2="100"
+						stroke="var(--selection-color)"
+						strokeWidth="2"
+						pointerEvents="none"
+						className="selection-marker selection-marker-in"
+					/>
+				)}
+				{selectionMarkers.out !== null && selectionMarkers.in === null && (
+					<line
+						x1={selectionMarkers.out * barsCount * 3}
+						y1="0"
+						x2={selectionMarkers.out * barsCount * 3}
+						y2="100"
+						stroke="var(--selection-color)"
+						strokeWidth="2"
+						strokeDasharray="4 3"
+						pointerEvents="none"
+						className="selection-marker selection-marker-out"
+					/>
+				)}
 
 				{hoverPct !== null && (
 					<line

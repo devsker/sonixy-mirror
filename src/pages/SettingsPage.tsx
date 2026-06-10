@@ -153,7 +153,16 @@ export default function SettingsPage() {
 						<h3>Keyboard shortcuts</h3>
 						<ul className="shortcut-list">
 							<li>
-								<kbd>Space</kbd> Play / pause
+								<kbd>Space</kbd> <kbd>K</kbd> Play / pause
+							</li>
+							<li>
+								<kbd>I</kbd> <kbd>O</kbd> Set selection in / out
+							</li>
+							<li>
+								<kbd>X</kbd> Clear selection
+							</li>
+							<li>
+								<kbd>J</kbd> <kbd>L</kbd> Slower / faster (keeps pitch; needs FFmpeg)
 							</li>
 							<li>
 								<kbd>←</kbd> <kbd>→</kbd> Previous / next file

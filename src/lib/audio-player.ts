@@ -12,6 +12,7 @@ class AudioPlayer {
 	currentTime = 0;
 	duration = 0;
 	volume = settingsStore.volume;
+	playbackSpeed = 1;
 	private lastVolume = settingsStore.volume > 0 ? settingsStore.volume : 1;
 	private lastSyncTime = 0;
 	private lastSyncWallClock = 0;
@@ -24,7 +25,10 @@ class AudioPlayer {
 	get smoothTime() {
 		if (!this.isPlaying) return this.currentTime;
 		const elapsed = (performance.now() - this.lastSyncWallClock) / 1000;
-		return Math.min(this.duration, Math.max(0, this.lastSyncTime + elapsed));
+		return Math.min(
+			this.duration,
+			Math.max(0, this.lastSyncTime + elapsed * this.playbackSpeed)
+		);
 	}
 	private animationFrame: number | null = null;
 	private replayAnimationFrame: number | null = null;
@@ -32,6 +36,19 @@ class AudioPlayer {
 	abLoopEnabled = false;
 	abLoopStart = 0;
 	abLoopEnd = 1;
+	waveformFileId: string | null = null;
+	selectionFileId: string | null = null;
+	selectionIn: number | null = null;
+	selectionOut: number | null = null;
+
+	get selectionRange(): { start: number; end: number } | null {
+		if (this.selectionIn === null || this.selectionOut === null) return null;
+		const start = Math.min(this.selectionIn, this.selectionOut);
+		const end = Math.max(this.selectionIn, this.selectionOut);
+		if (end - start <= 0.001) return null;
+		return { start, end };
+	}
+
 	constructor() {
 		if (typeof window !== 'undefined') {
 			invoke('set_volume', { volume: this.volume });
@@ -106,6 +123,95 @@ class AudioPlayer {
 		this.abLoopEnabled = false;
 		this.abLoopStart = 0;
 		this.abLoopEnd = 1;
+	}
+
+	setWaveformFileId(id: string | null) {
+		this.waveformFileId = id;
+	}
+
+	private activeFileId() {
+		return this.currentFileId ?? this.waveformFileId;
+	}
+
+	private playheadFraction() {
+		if (!this.currentFileId || this.duration <= 0) return 0;
+		return this.smoothProgress;
+	}
+
+	setSelectionIn(fraction?: number) {
+		const fileId = this.activeFileId();
+		if (!fileId) return;
+		const f = Math.max(0, Math.min(1, fraction ?? this.playheadFraction()));
+		this.selectionFileId = fileId;
+
+		if (this.selectionIn !== null && this.selectionOut !== null) {
+			this.selectionIn = f;
+			this.selectionOut = null;
+		} else {
+			this.selectionIn = f;
+		}
+		this.notify();
+	}
+
+	setSelectionOut(fraction?: number) {
+		const fileId = this.activeFileId();
+		if (!fileId) return;
+		const f = Math.max(0, Math.min(1, fraction ?? this.playheadFraction()));
+		this.selectionFileId = fileId;
+
+		if (this.selectionIn !== null && this.selectionOut !== null) {
+			this.selectionOut = f;
+			this.selectionIn = null;
+		} else {
+			this.selectionOut = f;
+		}
+		this.notify();
+	}
+
+	setSelection(start: number, end: number, fileId?: string) {
+		const id = fileId ?? this.activeFileId();
+		if (!id) return;
+		const lo = Math.max(0, Math.min(1, Math.min(start, end)));
+		const hi = Math.max(0, Math.min(1, Math.max(start, end)));
+		this.selectionFileId = id;
+		this.selectionIn = lo;
+		this.selectionOut = hi;
+		this.notify();
+	}
+
+	clearSelection() {
+		this.selectionFileId = null;
+		this.selectionIn = null;
+		this.selectionOut = null;
+		this.notify();
+	}
+
+	async setPlaybackSpeed(speed: number) {
+		this.playbackSpeed = speed;
+		try {
+			await invoke('set_playback_speed', { speed });
+			this.syncPlaybackClock(this.smoothTime);
+			this.notify();
+		} catch (e) {
+			console.error('AudioPlayer: Failed to set playback speed:', e);
+		}
+	}
+
+	cycleFaster() {
+		if (this.playbackSpeed === 1) void this.setPlaybackSpeed(2);
+		else if (this.playbackSpeed === 2) void this.setPlaybackSpeed(4);
+		else void this.setPlaybackSpeed(1);
+	}
+
+	cycleSlower() {
+		if (this.playbackSpeed === 1) void this.setPlaybackSpeed(0.5);
+		else if (this.playbackSpeed === 0.5) void this.setPlaybackSpeed(0.25);
+		else void this.setPlaybackSpeed(1);
+	}
+
+	private async resetPlaybackSpeed() {
+		if (this.playbackSpeed === 1) return;
+		await this.setPlaybackSpeed(1);
 	}
 
 	private clearReplayTimeout() {
@@ -188,7 +294,10 @@ class AudioPlayer {
 		if (this.currentFileId !== file.id) {
 			this.currentFileId = file.id;
 			this.duration = file.duration || 0;
-			this.clearAbLoop();
+			if (this.selectionFileId !== file.id) {
+				this.clearSelection();
+			}
+			await this.resetPlaybackSpeed();
 
 			collectionStore.files.forEach((f) => {
 				f.selected = f.id === file.id;
@@ -307,8 +416,9 @@ class AudioPlayer {
 		}
 	}
 
-	stop() {
-		this.clearAbLoop();
+	async stop() {
+		this.clearSelection();
+		await this.resetPlaybackSpeed();
 		invoke('stop_audio');
 		this.isPlaying = false;
 		this.currentFileId = null;

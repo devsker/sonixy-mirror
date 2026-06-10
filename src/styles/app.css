@@ -1059,6 +1059,14 @@ html.dark .waveform-path.played {
 	stroke-width: 1;
 }
 
+.selection-marker {
+	opacity: 0.9;
+}
+
+.selection-marker-out {
+	opacity: 0.8;
+}
+
 .hover-line {
 	opacity: 0.75;
 	transition: opacity 0.15s;

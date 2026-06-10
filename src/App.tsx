@@ -110,8 +110,21 @@ export default function App() {
 
 		switch (e.code) {
 			case 'Space':
+			case 'KeyK':
 				e.preventDefault();
 				audioPlayer.toggle();
+				break;
+			case 'KeyI':
+				e.preventDefault();
+				audioPlayer.setSelectionIn();
+				break;
+			case 'KeyO':
+				e.preventDefault();
+				audioPlayer.setSelectionOut();
+				break;
+			case 'KeyX':
+				e.preventDefault();
+				audioPlayer.clearSelection();
 				break;
 			case 'ArrowLeft':
 				e.preventDefault();
@@ -120,6 +133,14 @@ export default function App() {
 			case 'ArrowRight':
 				e.preventDefault();
 				audioPlayer.next();
+				break;
+			case 'KeyJ':
+				e.preventDefault();
+				audioPlayer.cycleSlower();
+				break;
+			case 'KeyL':
+				e.preventDefault();
+				audioPlayer.cycleFaster();
 				break;
 			case 'KeyM':
 				e.preventDefault();

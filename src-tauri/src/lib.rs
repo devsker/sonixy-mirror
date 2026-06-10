@@ -1,3 +1,4 @@
+mod audio_tempo;
 mod collection;
 mod ffmpeg;
 mod library_archive;
@@ -5,10 +6,9 @@ mod library_archive;
 use crate::collection::FileItem;
 use rayon::prelude::*;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
-use std::collections::{HashSet, VecDeque};
-use std::fs::File;
-use std::io::{Cursor, Read};
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::io::Cursor;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
@@ -47,9 +47,205 @@ struct AudioState {
     sink: Mutex<Sink>,
     global_volume: Mutex<f32>,
     current_file_gain: Mutex<f32>,
+    playback_speed: Mutex<f32>,
+    pitch_preserved: Mutex<bool>,
+    current_full_path: Mutex<Option<PathBuf>>,
+    current_relative_path: Mutex<Option<String>>,
+    tempo_cache: Mutex<HashMap<(String, u32), Vec<u8>>>,
     start_instant: Mutex<Option<Instant>>,
     elapsed_before_pause: Mutex<Duration>,
     suppress_ended: Arc<AtomicBool>,
+}
+
+fn tempo_cache_key(path: &Path, speed: f32) -> (String, u32) {
+    (
+        path.to_string_lossy().to_string(),
+        (speed * 1000.0).round() as u32,
+    )
+}
+
+fn get_playback_bytes(audio: &AudioState, full_path: &Path, speed: f32) -> Result<Vec<u8>, String> {
+    if (speed - 1.0).abs() < 0.001 {
+        return std::fs::read(full_path).map_err(|e| e.to_string());
+    }
+
+    let key = tempo_cache_key(full_path, speed);
+    if let Ok(cache) = audio.tempo_cache.lock() {
+        if let Some(bytes) = cache.get(&key) {
+            return Ok(bytes.clone());
+        }
+    }
+
+    let bytes = audio_tempo::decode_for_playback(full_path, speed, || {
+        ffmpeg::create_ffmpeg_command(None)
+    })?;
+
+    if let Ok(mut cache) = audio.tempo_cache.lock() {
+        if cache.len() >= 8 {
+            if let Some(oldest) = cache.keys().next().cloned() {
+                cache.remove(&oldest);
+            }
+        }
+        cache.insert(key, bytes.clone());
+    }
+
+    Ok(bytes)
+}
+
+fn is_audio_playing(audio: &AudioState) -> bool {
+    audio
+        .start_instant
+        .lock()
+        .map(|start| start.is_some())
+        .unwrap_or(false)
+}
+
+fn stream_seek_seconds(audio: &AudioState, original_seconds: f32) -> f32 {
+    let speed = audio_playback_speed(audio);
+    let pitch_preserved = audio
+        .pitch_preserved
+        .lock()
+        .map(|v| *v)
+        .unwrap_or(false);
+    if pitch_preserved && (speed - 1.0).abs() >= 0.001 {
+        original_seconds / speed
+    } else {
+        original_seconds
+    }
+}
+
+fn load_audio_at(
+    audio: &AudioState,
+    full_path: &Path,
+    relative_path: &str,
+    gain: f32,
+    speed: f32,
+    start_original_seconds: f32,
+    play: bool,
+) -> Result<(), String> {
+    let mut pitch_preserved = false;
+    let bytes = match get_playback_bytes(audio, full_path, speed) {
+        Ok(bytes) => {
+            pitch_preserved = (speed - 1.0).abs() >= 0.001;
+            bytes
+        }
+        Err(err) if (speed - 1.0).abs() >= 0.001 => {
+            eprintln!("Pitch-preserving speed failed, falling back to rodio: {err}");
+            std::fs::read(full_path).map_err(|e| e.to_string())?
+        }
+        Err(err) => return Err(err),
+    };
+
+    let source = Decoder::new(Cursor::new(bytes)).map_err(|e| e.to_string())?;
+
+    audio.suppress_ended.store(true, Ordering::SeqCst);
+    let sink = audio
+        .sink
+        .lock()
+        .map_err(|_| "State poisoned".to_string())?;
+    sink.stop();
+
+    {
+        let mut g = audio
+            .current_file_gain
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?;
+        *g = gain;
+        let vol = audio
+            .global_volume
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?;
+        sink.set_volume(*vol * gain);
+    }
+
+    sink.append(source);
+    if pitch_preserved {
+        sink.set_speed(1.0);
+    } else {
+        sink.set_speed(speed);
+    }
+
+    let seek_pos = if pitch_preserved {
+        start_original_seconds / speed
+    } else {
+        start_original_seconds
+    };
+    if seek_pos > 0.0 {
+        let _ = sink.try_seek(Duration::from_secs_f32(seek_pos));
+    }
+
+    if play {
+        sink.play();
+    } else {
+        sink.pause();
+    }
+    audio.suppress_ended.store(false, Ordering::SeqCst);
+
+    {
+        let mut path_slot = audio
+            .current_full_path
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?;
+        *path_slot = Some(full_path.to_path_buf());
+        let mut rel_slot = audio
+            .current_relative_path
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?;
+        *rel_slot = Some(relative_path.to_string());
+        let mut preserved = audio
+            .pitch_preserved
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?;
+        *preserved = pitch_preserved;
+        let mut start = audio
+            .start_instant
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?;
+        *start = if play { Some(Instant::now()) } else { None };
+        let mut elapsed = audio
+            .elapsed_before_pause
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?;
+        *elapsed = Duration::from_secs_f32(start_original_seconds);
+    }
+
+    Ok(())
+}
+
+fn audio_playback_speed(state: &AudioState) -> f32 {
+    state
+        .playback_speed
+        .lock()
+        .map(|speed| *speed)
+        .unwrap_or(1.0)
+}
+
+fn audio_position_seconds(state: &AudioState) -> f32 {
+    let speed = audio_playback_speed(state);
+    let Ok(start) = state.start_instant.lock() else {
+        return 0.0;
+    };
+    let Ok(elapsed) = state.elapsed_before_pause.lock() else {
+        return 0.0;
+    };
+
+    if let Some(s) = *start {
+        elapsed.as_secs_f32() + s.elapsed().as_secs_f32() * speed
+    } else {
+        elapsed.as_secs_f32()
+    }
+}
+
+fn sync_audio_position(state: &AudioState) {
+    let position = audio_position_seconds(state);
+    if let Ok(mut elapsed) = state.elapsed_before_pause.lock() {
+        *elapsed = Duration::from_secs_f32(position);
+    }
+    if let Ok(mut start) = state.start_instant.lock() {
+        if start.is_some() {
+            *start = Some(Instant::now());
+        }
+    }
 }
 
 struct AppState {
@@ -696,60 +892,13 @@ fn play_audio(path: String, gain: f32, state: State<'_, AppState>) -> Result<(),
         .lock()
         .map_err(|_| "State poisoned".to_string())?;
     let full_path = if let Some(ref p) = *folder_path {
-        p.join(path)
+        p.join(&path)
     } else {
-        PathBuf::from(path)
+        PathBuf::from(&path)
     };
 
-    let mut file = File::open(full_path).map_err(|e| e.to_string())?;
-    let mut data = Vec::new();
-    file.read_to_end(&mut data).map_err(|e| e.to_string())?;
-
-    let source = Decoder::new(Cursor::new(data)).map_err(|e| e.to_string())?;
-
-    state.audio.suppress_ended.store(true, Ordering::SeqCst);
-    let sink = state
-        .audio
-        .sink
-        .lock()
-        .map_err(|_| "State poisoned".to_string())?;
-    sink.stop();
-
-    {
-        let mut g = state
-            .audio
-            .current_file_gain
-            .lock()
-            .map_err(|_| "State poisoned".to_string())?;
-        *g = gain;
-        let vol = state
-            .audio
-            .global_volume
-            .lock()
-            .map_err(|_| "State poisoned".to_string())?;
-        sink.set_volume(*vol * gain);
-    }
-
-    sink.append(source);
-    sink.play();
-    state.audio.suppress_ended.store(false, Ordering::SeqCst);
-
-    {
-        let mut start = state
-            .audio
-            .start_instant
-            .lock()
-            .map_err(|_| "State poisoned".to_string())?;
-        *start = Some(Instant::now());
-        let mut elapsed = state
-            .audio
-            .elapsed_before_pause
-            .lock()
-            .map_err(|_| "State poisoned".to_string())?;
-        *elapsed = Duration::ZERO;
-    }
-
-    Ok(())
+    let speed = audio_playback_speed(&state.audio);
+    load_audio_at(&state.audio, &full_path, &path, gain, speed, 0.0, true)
 }
 
 #[tauri::command]
@@ -758,15 +907,12 @@ fn pause_audio(state: State<'_, AppState>) {
         return;
     };
     if !sink.is_paused() {
+        let position = audio_position_seconds(&state.audio);
         sink.pause();
-        let Ok(mut start) = state.audio.start_instant.lock() else {
-            return;
-        };
-        if let Some(s) = *start {
-            let Ok(mut elapsed) = state.audio.elapsed_before_pause.lock() else {
-                return;
-            };
-            *elapsed += s.elapsed();
+        if let Ok(mut elapsed) = state.audio.elapsed_before_pause.lock() {
+            *elapsed = Duration::from_secs_f32(position);
+        }
+        if let Ok(mut start) = state.audio.start_instant.lock() {
             *start = None;
         }
     }
@@ -802,6 +948,15 @@ fn stop_audio(state: State<'_, AppState>) {
         return;
     };
     *elapsed = Duration::ZERO;
+    if let Ok(mut path_slot) = state.audio.current_full_path.lock() {
+        *path_slot = None;
+    }
+    if let Ok(mut rel_slot) = state.audio.current_relative_path.lock() {
+        *rel_slot = None;
+    }
+    if let Ok(mut preserved) = state.audio.pitch_preserved.lock() {
+        *preserved = false;
+    }
 }
 
 #[tauri::command]
@@ -821,18 +976,79 @@ fn set_volume(volume: f32, state: State<'_, AppState>) {
 
 #[tauri::command]
 fn get_audio_time(state: State<'_, AppState>) -> f32 {
-    let Ok(start) = state.audio.start_instant.lock() else {
-        return 0.0;
-    };
-    let Ok(elapsed) = state.audio.elapsed_before_pause.lock() else {
-        return 0.0;
-    };
+    audio_position_seconds(&state.audio)
+}
 
-    if let Some(s) = *start {
-        (*elapsed + s.elapsed()).as_secs_f32()
-    } else {
-        elapsed.as_secs_f32()
+#[tauri::command]
+async fn set_playback_speed(
+    speed: f32,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let speed = speed.clamp(0.25, 4.0);
+    sync_audio_position(&state.audio);
+    let original_pos = audio_position_seconds(&state.audio);
+    let playing = is_audio_playing(&state.audio);
+    let gain = {
+        let guard = state
+            .audio
+            .current_file_gain
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?;
+        *guard
+    };
+    let reload = {
+        let path = state
+            .audio
+            .current_full_path
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?
+            .clone();
+        let rel = state
+            .audio
+            .current_relative_path
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?
+            .clone();
+        match (path, rel) {
+            (Some(full_path), Some(relative_path)) => Some((full_path, relative_path)),
+            _ => None,
+        }
+    };
+    {
+        let mut stored = state
+            .audio
+            .playback_speed
+            .lock()
+            .map_err(|_| "State poisoned".to_string())?;
+        *stored = speed;
     }
+
+    if let Some((full_path, relative_path)) = reload {
+        if (speed - 1.0).abs() >= 0.001 {
+            let app_for_ffmpeg = app.clone();
+            tauri::async_runtime::spawn_blocking(move || ffmpeg::ensure_blocking(&app_for_ffmpeg))
+                .await
+                .map_err(|e| e.to_string())??;
+        }
+        let handle = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let state = handle.state::<AppState>();
+            load_audio_at(
+                &state.audio,
+                &full_path,
+                &relative_path,
+                gain,
+                speed,
+                original_pos,
+                playing,
+            )
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -842,8 +1058,8 @@ fn seek_audio(time_seconds: f32, state: State<'_, AppState>) -> Result<(), Strin
         .sink
         .lock()
         .map_err(|_| "State poisoned".to_string())?;
-    let duration = Duration::from_secs_f32(time_seconds);
-    if let Err(e) = sink.try_seek(duration) {
+    let stream_time = stream_seek_seconds(&state.audio, time_seconds);
+    if let Err(e) = sink.try_seek(Duration::from_secs_f32(stream_time)) {
         return Err(e.to_string());
     }
 
@@ -857,7 +1073,7 @@ fn seek_audio(time_seconds: f32, state: State<'_, AppState>) -> Result<(), Strin
         .elapsed_before_pause
         .lock()
         .map_err(|_| "State poisoned".to_string())?;
-    *elapsed = duration;
+    *elapsed = Duration::from_secs_f32(time_seconds);
     if start.is_some() {
         *start = Some(Instant::now());
     }
@@ -1002,6 +1218,11 @@ pub fn run() {
         sink: Mutex::new(sink),
         global_volume: Mutex::new(1.0),
         current_file_gain: Mutex::new(1.0),
+        playback_speed: Mutex::new(1.0),
+        pitch_preserved: Mutex::new(false),
+        current_full_path: Mutex::new(None),
+        current_relative_path: Mutex::new(None),
+        tempo_cache: Mutex::new(HashMap::new()),
         start_instant: Mutex::new(None),
         elapsed_before_pause: Mutex::new(Duration::ZERO),
         suppress_ended: Arc::new(AtomicBool::new(false)),
@@ -1233,6 +1454,7 @@ pub fn run() {
             stop_audio,
             set_volume,
             get_audio_time,
+            set_playback_speed,
             seek_audio,
             prepare_drag_clip,
             update_file_tags,
