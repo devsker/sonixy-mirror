@@ -1,4 +1,13 @@
-import { memo, useDeferredValue, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import {
+	memo,
+	useCallback,
+	useDeferredValue,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	type MouseEvent
+} from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
 	ChevronUp,
@@ -107,7 +116,6 @@ type FileRowProps = {
 	index: number;
 	showCheckboxes: boolean;
 	columnOrder: string[];
-	collectionPath: string | null;
 	taggingFileId: string | null;
 	newTagValue: string;
 	onTagInputRef: (el: HTMLInputElement | null) => void;
@@ -125,7 +133,6 @@ const FileRow = memo(function FileRow({
 	index,
 	showCheckboxes,
 	columnOrder,
-	collectionPath,
 	taggingFileId,
 	newTagValue,
 	onTagInputRef,
@@ -137,15 +144,23 @@ const FileRow = memo(function FileRow({
 	onRemoveTag,
 	onStartTagging
 }: FileRowProps) {
+	// dragOptions reads from collectionStore live (not from props) so the
+	// drag library's event handlers always see the latest selection/path
+	// without needing a fresh `dragOptions` reference per render.
 	const dragOptions: ExternalFileDragOptions = {
-		disabled: () => file.missing || !collectionPath,
+		disabled: () => file.missing || !collectionStore.collectionPath,
 		getPaths: () => {
-			if (file.missing || !collectionPath) return [];
+			if (file.missing || !collectionStore.collectionPath) return [];
+			const cp = collectionStore.collectionPath;
+			// Look up this row's current `selected` state from the live store
+			// so dragging picks up the latest selection, not the snapshot
+			// captured at render time.
+			const liveFile = collectionStore.files.find((f) => f.id === file.id) ?? file;
 			const selectedFiles = collectionStore.files.filter((f) => f.selected && !f.missing);
-			if (file.selected) {
-				return selectedFiles.map((f) => `${collectionPath}/${f.filepath}`.replace(/[/\\]+/g, '/'));
+			if (liveFile.selected) {
+				return selectedFiles.map((f) => `${cp}/${f.filepath}`.replace(/[/\\]+/g, '/'));
 			}
-			return [`${collectionPath}/${file.filepath}`.replace(/[/\\]+/g, '/')];
+			return [`${cp}/${liveFile.filepath}`.replace(/[/\\]+/g, '/')];
 		}
 	};
 
@@ -185,9 +200,7 @@ const FileRow = memo(function FileRow({
 										<AlertTriangle size={14} />
 									</span>
 								)}
-								<span
-									className={audioPlayer.currentFileId === file.id ? "playing" : undefined}
-								>
+								<span className={audioPlayer.currentFileId === file.id ? 'playing' : undefined}>
 									{getDisplayName(file.filename)}
 								</span>
 							</div>
@@ -333,23 +346,71 @@ export function FileList({ onSelectionChange }: FileListProps) {
 	const selectedTags = settingsStore.selectedTags;
 	const columnOrder = settingsStore.columnOrder;
 
+	// ── Virtualization ──────────────────────────────────────────────
+	const ROW_HEIGHT = 36; // matches `.file-table tbody tr { contain-intrinsic-size: auto 36px }`
+	const OVERSCAN = 10;
+	const [scrollTop, setScrollTop] = useState(0);
+	const [viewportHeight, setViewportHeight] = useState(600);
+
 	const displayedFiles = useMemo(
 		() => collectionStore.computeDisplayedFiles(deferredFiles),
+		// collectionTick / settingsTick force re-computation when the relevant store bumps.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 		[deferredFiles, collectionTick, settingsTick]
 	);
 	const selectedIds = useMemo(
 		() => collectionStore.files.filter((f) => f.selected).map((f) => f.id),
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 		[collectionTick]
 	);
 
-	const allFormats = [...new Set(files.map((f) => f.format))].sort();
-	const allTags = [...new Set(files.flatMap((f) => f.tags))].sort();
+	// Windowed slice of displayedFiles for virtualization.
+	const visibleWindow = useMemo(() => {
+		const total = displayedFiles.length;
+		if (total === 0) {
+			return { startIdx: 0, endIdx: 0, topPad: 0, bottomPad: 0, slice: [] as FileItem[] };
+		}
+		const startIdx = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+		const visibleCount = Math.ceil(viewportHeight / ROW_HEIGHT) + OVERSCAN * 2;
+		const endIdx = Math.min(total, startIdx + visibleCount);
+		return {
+			startIdx,
+			endIdx,
+			topPad: startIdx * ROW_HEIGHT,
+			bottomPad: Math.max(0, (total - endIdx) * ROW_HEIGHT),
+			slice: displayedFiles.slice(startIdx, endIdx)
+		};
+	}, [displayedFiles, scrollTop, viewportHeight]);
+
+	useEffect(() => {
+		displayedFilesRef.current = displayedFiles;
+	}, [displayedFiles]);
+	useEffect(() => {
+		filesRef.current = files;
+	}, [files]);
+
+	const { allFormats, allTags } = useMemo(() => {
+		const formatSet = new Set<string>();
+		const tagSet = new Set<string>();
+		for (const f of files) {
+			formatSet.add(f.format);
+			for (const t of f.tags) tagSet.add(t);
+		}
+		return {
+			allFormats: [...formatSet].sort(),
+			allTags: [...tagSet].sort()
+		};
+		// collectionTick forces re-computation when the file list mutates.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [files, collectionTick]);
 
 	const allSelected = displayedFiles.length > 0 && displayedFiles.every((f) => f.selected);
 	const someSelected = displayedFiles.some((f) => f.selected) && !allSelected;
 
 	const [activePopover, setActivePopover] = useState<'format' | 'tags' | null>(null);
-	const [lastSelectedIndex, setLastSelectedIndex] = useState(-1);
+	// `lastSelectedIndex` is stored only to force a re-render; the live value lives in the ref.
+	const [, setLastSelectedIndex] = useState(-1);
+	const lastSelectedIndexRef = useRef(-1);
 	const [draggingColumn, setDraggingColumn] = useState<string | null>(null);
 	const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
 	const columnDragRef = useRef<{
@@ -360,6 +421,8 @@ export function FileList({ onSelectionChange }: FileListProps) {
 	} | null>(null);
 	const columnDidDragRef = useRef(false);
 	const dragOverColumnRef = useRef<string | null>(null);
+	const displayedFilesRef = useRef<FileItem[]>([]);
+	const filesRef = useRef<FileItem[]>([]);
 
 	const [taggingFile, setTaggingFile] = useState<FileItem | null>(null);
 	const [newTagValue, setNewTagValue] = useState('');
@@ -368,6 +431,7 @@ export function FileList({ onSelectionChange }: FileListProps) {
 	const dropTargetRef = useRef<HTMLDivElement | null>(null);
 	const externalDragActiveRef = useRef(false);
 	const [dropHover, setDropHover] = useState(false);
+	const filenameSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	useEffect(() => {
 		onSelectionChange?.(selectedIds);
@@ -413,9 +477,7 @@ export function FileList({ onSelectionChange }: FileListProps) {
 				return;
 			}
 
-			setDropHover(
-				isPhysicalPointInElement(dropTarget, payload.position.x, payload.position.y)
-			);
+			setDropHover(isPhysicalPointInElement(dropTarget, payload.position.x, payload.position.y));
 		});
 
 		return () => {
@@ -430,7 +492,11 @@ export function FileList({ onSelectionChange }: FileListProps) {
 		if (!playingFile) return;
 		const index = collectionStore.displayedFiles.indexOf(playingFile);
 		if (index === -1) return;
-		setLastSelectedIndex((prev) => (prev === index ? prev : index));
+		setLastSelectedIndex((prev) => {
+			if (prev === index) return prev;
+			lastSelectedIndexRef.current = index;
+			return index;
+		});
 	}, [audioTick, collectionTick]);
 
 	useEffect(() => {
@@ -438,6 +504,35 @@ export function FileList({ onSelectionChange }: FileListProps) {
 			selectAllRef.current.indeterminate = someSelected;
 		}
 	}, [someSelected, allSelected]);
+
+	useEffect(() => {
+		return () => {
+			if (filenameSearchTimerRef.current !== null) {
+				clearTimeout(filenameSearchTimerRef.current);
+				filenameSearchTimerRef.current = null;
+			}
+		};
+	}, []);
+
+	useEffect(() => {
+		const el = dropTargetRef.current;
+		if (!el) return;
+		const updateViewport = () => setViewportHeight(el.clientHeight);
+		updateViewport();
+		const ro = new ResizeObserver(updateViewport);
+		ro.observe(el);
+		return () => ro.disconnect();
+	}, [collectionPath]);
+
+	// Reset the scroll position when the displayed list shrinks (collection
+	// switch, filter change that empties the list, etc.).
+	useEffect(() => {
+		if (displayedFiles.length === 0) {
+			setScrollTop(0);
+			const el = dropTargetRef.current;
+			if (el) el.scrollTop = 0;
+		}
+	}, [displayedFiles.length, collectionTick]);
 
 	useEffect(() => {
 		if (!taggingFile || !tagInputRef.current) return;
@@ -448,12 +543,47 @@ export function FileList({ onSelectionChange }: FileListProps) {
 		return () => cancelAnimationFrame(id);
 	}, [taggingFile]);
 
-	const closeTagDialog = () => {
+	const closeTagDialog = useCallback(() => {
 		setTaggingFile(null);
 		setNewTagValue('');
-	};
+	}, []);
 
-	const handleRemoveFile = async (file: FileItem) => {
+	const setTagInputRefCallback = useCallback((el: HTMLInputElement | null) => {
+		tagInputRef.current = el;
+	}, []);
+
+	const handleAddTag = useCallback(async () => {
+		if (!taggingFile) return;
+		const tag = newTagValue.trim();
+		if (tag && !taggingFile.tags.includes(tag)) {
+			const newTags = [...taggingFile.tags, tag];
+			await collectionStore.updateTags(taggingFile.id, newTags);
+		}
+		closeTagDialog();
+	}, [taggingFile, newTagValue, closeTagDialog]);
+
+	const removeTag = useCallback(async (file: FileItem, tagToRemove: string) => {
+		const newTags = file.tags.filter((t) => t !== tagToRemove);
+		await collectionStore.updateTags(file.id, newTags);
+	}, []);
+
+	const onAddTag = useCallback(() => {
+		void handleAddTag();
+	}, [handleAddTag]);
+
+	const onRemoveTag = useCallback(
+		(file: FileItem, tag: string) => {
+			void removeTag(file, tag);
+		},
+		[removeTag]
+	);
+
+	const onStartTagging = useCallback((file: FileItem) => {
+		setTaggingFile(file);
+		setNewTagValue('');
+	}, []);
+
+	const handleRemoveFile = useCallback(async (file: FileItem) => {
 		const choice = await promptRemoveFile(file.filename);
 		if (!choice) return;
 		audioPlayer.stopIfPlaying(file.id);
@@ -462,147 +592,155 @@ export function FileList({ onSelectionChange }: FileListProps) {
 		} else {
 			await collectionStore.removeFileFromDisk(file.id);
 		}
-	};
+	}, []);
 
-	const toggleAll = () => {
+	const toggleAll = useCallback(() => {
 		const newState = !allSelected;
-		displayedFiles.forEach((f) => {
+		displayedFilesRef.current.forEach((f) => {
 			f.selected = newState;
 		});
 		collectionStore.notify();
-	};
+	}, [allSelected]);
 
-	const handleSelection = (event: MouseEvent, index: number) => {
+	const handleSelection = useCallback((event: MouseEvent, index: number) => {
 		const isShift = event.shiftKey;
 		const isCtrl = event.ctrlKey || event.metaKey;
-		const file = displayedFiles[index];
+		const displayed = displayedFilesRef.current;
+		const file = displayed[index];
+		if (!file) return;
 
-		if (isShift && lastSelectedIndex !== -1) {
-			const start = Math.min(lastSelectedIndex, index);
-			const end = Math.max(lastSelectedIndex, index);
+		if (isShift && lastSelectedIndexRef.current !== -1) {
+			const start = Math.min(lastSelectedIndexRef.current, index);
+			const end = Math.max(lastSelectedIndexRef.current, index);
 			for (let i = start; i <= end; i++) {
-				displayedFiles[i].selected = true;
+				displayed[i].selected = true;
 			}
 		} else if (isCtrl) {
-			displayedFiles[index].selected = !displayedFiles[index].selected;
+			displayed[index].selected = !displayed[index].selected;
 			setLastSelectedIndex(index);
+			lastSelectedIndexRef.current = index;
 		} else {
-			if (displayedFiles[index].selected && !displayedFiles[index].missing) {
+			if (displayed[index].selected && !displayed[index].missing) {
 				if (!collectionStore.isLocked(file.id)) {
-					audioPlayer.toggle(displayedFiles[index]);
+					audioPlayer.toggle(displayed[index]);
 				}
 			} else {
-				files.forEach((f) => {
+				filesRef.current.forEach((f) => {
 					f.selected = false;
 				});
-				displayedFiles[index].selected = true;
+				displayed[index].selected = true;
 				setLastSelectedIndex(index);
-				if (!displayedFiles[index].missing && !collectionStore.isLocked(file.id)) {
-					audioPlayer.play(displayedFiles[index]);
+				lastSelectedIndexRef.current = index;
+				if (!displayed[index].missing && !collectionStore.isLocked(file.id)) {
+					audioPlayer.play(displayed[index]);
 				}
 			}
 		}
 		collectionStore.notify();
-	};
+	}, []);
 
-	const handleContextMenu = (event: MouseEvent, file: FileItem) => {
-		event.preventDefault();
-		event.stopPropagation();
+	const handleContextMenu = useCallback(
+		(event: MouseEvent, file: FileItem) => {
+			event.preventDefault();
+			event.stopPropagation();
 
-		if (!file.selected) {
-			files.forEach((f) => {
-				f.selected = false;
-			});
-			file.selected = true;
-			collectionStore.notify();
-		}
+			if (!file.selected) {
+				filesRef.current.forEach((f) => {
+					f.selected = false;
+				});
+				file.selected = true;
+				collectionStore.notify();
+			}
 
-		const selectedFiles = files.filter((f) => f.selected && !f.missing);
-		if (selectedFiles.length > 1) {
-			const unionTags = [...new Set(selectedFiles.flatMap((f) => f.tags))].sort();
+			const allFiles = filesRef.current;
+			const selectedFiles = allFiles.filter((f) => f.selected && !f.missing);
+			if (selectedFiles.length > 1) {
+				const unionTags = [...new Set(selectedFiles.flatMap((f) => f.tags))].sort();
+				showContextMenu(event.clientX, event.clientY, [
+					{
+						label: `Add tag to ${selectedFiles.length} files…`,
+						action: async () => {
+							const tag = await promptTagName(`Add tag to ${selectedFiles.length} files:`);
+							if (!tag) return;
+							await collectionStore.batchAddTag(
+								selectedFiles.map((f) => f.id),
+								tag
+							);
+						}
+					},
+					{
+						label: 'Remove tag from selection…',
+						disabled: unionTags.length === 0,
+						action: async () => {
+							const tag = await promptPickTag(unionTags, selectedFiles.length);
+							if (!tag) return;
+							await collectionStore.batchRemoveTag(
+								selectedFiles.map((f) => f.id),
+								tag
+							);
+						}
+					},
+					{ separator: true },
+					{
+						label: 'Remove',
+						action: () => void handleRemoveFile(file)
+					}
+				]);
+				return;
+			}
+
+			const isLocked = collectionStore.isLocked(file.id);
+
 			showContextMenu(event.clientX, event.clientY, [
 				{
-					label: `Add tag to ${selectedFiles.length} files…`,
-					action: async () => {
-						const tag = await promptTagName(`Add tag to ${selectedFiles.length} files:`);
-						if (!tag) return;
-						await collectionStore.batchAddTag(
-							selectedFiles.map((f) => f.id),
-							tag
-						);
-					}
+					label: audioPlayer.currentFileId === file.id && audioPlayer.isPlaying ? 'Pause' : 'Play',
+					disabled: file.missing || isLocked,
+					action: () => audioPlayer.toggle(file)
 				},
+				{ separator: true },
 				{
-					label: 'Remove tag from selection…',
-					disabled: unionTags.length === 0,
-					action: async () => {
-						const tag = await promptPickTag(unionTags, selectedFiles.length);
-						if (!tag) return;
-						await collectionStore.batchRemoveTag(
-							selectedFiles.map((f) => f.id),
-							tag
-						);
+					label: 'Add Tag...',
+					disabled: file.missing || isLocked,
+					action: () => {
+						setTaggingFile(file);
+						setNewTagValue('');
 					}
 				},
 				{ separator: true },
 				{
+					label: 'Show in Folder',
+					disabled: file.missing,
+					action: async () => {
+						const fullPath = `${collectionPath}/${file.filepath}`.replace(/[\\/]+/g, '/');
+						await revealItemInDir(fullPath);
+					}
+				},
+				{
+					label: 'Copy Path',
+					action: async () => {
+						const fullPath = `${collectionPath}/${file.filepath}`.replace(/[\\/]+/g, '/');
+						await navigator.clipboard.writeText(fullPath);
+					}
+				},
+				{ separator: true },
+				...(file.missing
+					? [
+							{
+								label: 'Locate File...',
+								disabled: isLocked,
+								action: () => collectionStore.relocateFile(file.id)
+							}
+						]
+					: []),
+				{
 					label: 'Remove',
+					disabled: isLocked,
 					action: () => void handleRemoveFile(file)
 				}
 			]);
-			return;
-		}
-
-		const isLocked = collectionStore.isLocked(file.id);
-
-		showContextMenu(event.clientX, event.clientY, [
-			{
-				label: audioPlayer.currentFileId === file.id && audioPlayer.isPlaying ? 'Pause' : 'Play',
-				disabled: file.missing || isLocked,
-				action: () => audioPlayer.toggle(file)
-			},
-			{ separator: true },
-			{
-				label: 'Add Tag...',
-				disabled: file.missing || isLocked,
-				action: () => {
-					setTaggingFile(file);
-					setNewTagValue('');
-				}
-			},
-			{ separator: true },
-			{
-				label: 'Show in Folder',
-				disabled: file.missing,
-				action: async () => {
-					const fullPath = `${collectionPath}/${file.filepath}`.replace(/[\\/]+/g, '/');
-					await revealItemInDir(fullPath);
-				}
-			},
-			{
-				label: 'Copy Path',
-				action: async () => {
-					const fullPath = `${collectionPath}/${file.filepath}`.replace(/[\\/]+/g, '/');
-					await navigator.clipboard.writeText(fullPath);
-				}
-			},
-			{ separator: true },
-			...(file.missing
-				? [
-						{
-							label: 'Locate File...',
-							disabled: isLocked,
-							action: () => collectionStore.relocateFile(file.id)
-						}
-					]
-				: []),
-			{
-				label: 'Remove',
-				disabled: isLocked,
-				action: () => void handleRemoveFile(file)
-			}
-		]);
-	};
+		},
+		[collectionPath, handleRemoveFile]
+	);
 
 	const reorderColumns = (sourceId: string, targetId: string) => {
 		const fromIndex = columnOrder.indexOf(sourceId);
@@ -716,15 +854,14 @@ export function FileList({ onSelectionChange }: FileListProps) {
 		settingsStore.notify();
 	};
 
-	const handleAddTag = async () => {
-		if (!taggingFile) return;
-		const tag = newTagValue.trim();
-		if (tag && !taggingFile.tags.includes(tag)) {
-			const newTags = [...taggingFile.tags, tag];
-			await collectionStore.updateTags(taggingFile.id, newTags);
-		}
-		closeTagDialog();
-	};
+	const taggingFileRef = useRef<FileItem | null>(null);
+	const newTagValueRef = useRef('');
+	useEffect(() => {
+		taggingFileRef.current = taggingFile;
+	}, [taggingFile]);
+	useEffect(() => {
+		newTagValueRef.current = newTagValue;
+	}, [newTagValue]);
 
 	useEffect(() => {
 		const closePopovers = () => setActivePopover(null);
@@ -732,8 +869,13 @@ export function FileList({ onSelectionChange }: FileListProps) {
 			if (e.key === 'Escape') {
 				closeTagDialog();
 			}
-			if (e.key === 'Enter' && taggingFile) {
-				void handleAddTag();
+			if (e.key === 'Enter' && taggingFileRef.current) {
+				const tag = newTagValueRef.current.trim();
+				const target = taggingFileRef.current;
+				if (tag && !target.tags.includes(tag)) {
+					void collectionStore.updateTags(target.id, [...target.tags, tag]);
+				}
+				closeTagDialog();
 			}
 		};
 		window.addEventListener('click', closePopovers);
@@ -742,17 +884,12 @@ export function FileList({ onSelectionChange }: FileListProps) {
 			window.removeEventListener('click', closePopovers);
 			window.removeEventListener('keydown', onKeyDown);
 		};
-	}, [taggingFile, newTagValue]);
-
-	const removeTag = async (file: FileItem, tagToRemove: string) => {
-		const newTags = file.tags.filter((t) => t !== tagToRemove);
-		await collectionStore.updateTags(file.id, newTags);
-	};
+	}, [closeTagDialog]);
 
 	const containerContextMenu = (e: React.MouseEvent) => {
 		if (
 			e.target === e.currentTarget ||
-			(e.target as HTMLElement).classList.contains("empty-state")
+			(e.target as HTMLElement).classList.contains('empty-state')
 		) {
 			e.preventDefault();
 			showContextMenu(e.clientX, e.clientY, [
@@ -777,11 +914,22 @@ export function FileList({ onSelectionChange }: FileListProps) {
 								placeholder="Filter by filename…"
 								value={settingsStore.filenameQuery}
 								onInput={(e) => {
-									settingsStore.filenameQuery = e.currentTarget.value;
-									settingsStore.notify();
+									const next = e.currentTarget.value;
+									settingsStore.filenameQuery = next;
+									if (filenameSearchTimerRef.current !== null) {
+										clearTimeout(filenameSearchTimerRef.current);
+									}
+									filenameSearchTimerRef.current = setTimeout(() => {
+										filenameSearchTimerRef.current = null;
+										settingsStore.notify();
+									}, 100);
 								}}
 								onKeyDown={(e) => {
 									if (e.key === 'Escape') {
+										if (filenameSearchTimerRef.current !== null) {
+											clearTimeout(filenameSearchTimerRef.current);
+											filenameSearchTimerRef.current = null;
+										}
 										settingsStore.filenameQuery = '';
 										settingsStore.notify();
 										e.currentTarget.blur();
@@ -793,6 +941,9 @@ export function FileList({ onSelectionChange }: FileListProps) {
 				<div
 					ref={dropTargetRef}
 					className={`file-list-drop-target${dropHover ? ' file-list-drop-hover' : ''}`}
+					onScroll={(e) => {
+						setScrollTop((e.currentTarget as HTMLDivElement).scrollTop);
+					}}
 				>
 					{dropHover && (
 						<div className="file-list-drop-overlay" aria-hidden>
@@ -802,214 +953,217 @@ export function FileList({ onSelectionChange }: FileListProps) {
 						</div>
 					)}
 					{!collectionPath ? (
-					<div className="empty-state">
-						<FolderOpen size={48} />
-						<h2>No collection open</h2>
-						<p>Select a folder to start managing your audio files</p>
-						<button
-							type="button"
-							className="open-btn"
-							onClick={() => collectionStore.openCollection()}
-						>
-							Open Collection
-						</button>
-					</div>
-				) : showSwitchingUi ? (
-					<div className="empty-state">
-						<Loader2 size={48} className="animate-spin" />
-						<h2>Opening library</h2>
-						<p>{collectionDisplayName(switchingToPath ?? collectionPath)}</p>
-					</div>
-				) : loading && files.length === 0 ? (
-					<div className="empty-state">
-						<Loader2 size={48} className="animate-spin" />
-						<p>Scanning files…</p>
-					</div>
-				) : files.length === 0 ? (
-					<div className="empty-state">
-						<Filter size={48} />
-						<h2>No audio files found</h2>
-						<p>Try adding some audio files to the folder or drag them here</p>
-					</div>
-				) : (
-					<table
-							className={`file-table${!showCheckboxes ? ' file-table-no-checkboxes' : ''}`}
-						>
-							<thead>
-								<tr>
-									{showCheckboxes && (
-										<th className="checkbox-col">
-											<label className="checkbox">
-												<input
-													ref={selectAllRef}
-													type="checkbox"
-													checked={allSelected}
-													onChange={toggleAll}
-												/>
-												<span className="checkbox-mark" />
-											</label>
-										</th>
-									)}
-									{columnOrder.map((columnId) => {
-										const config = columnConfigs[columnId];
-										return (
-											<th
-												key={columnId}
-												data-column-id={columnId}
-												className={`${columnId}-col${config.sortable ? ' sortable-th' : ''}${config.filterable ? ' filterable-th' : ''}${draggingColumn === columnId ? ' dragging-th' : ''}${dragOverColumn === columnId && draggingColumn !== columnId ? ' drop-target-th' : ''}`}
-												onClick={(e) => {
-													if (columnDidDragRef.current) {
-														columnDidDragRef.current = false;
-														return;
-													}
-													if (config.sortable) toggleSort(columnId);
-													else if (config.filterable) toggleFilterPopover(config.filterable, e);
-												}}
-												onMouseDown={(e) => {
-													if (e.button !== 0) return;
-													beginColumnDrag(columnId, e.clientX, e.clientY);
-												}}
-												onKeyDown={(e) => {
-													if (e.key === 'Enter') {
-														if (config.sortable) toggleSort(columnId);
-														else if (config.filterable)
-															toggleFilterPopover(config.filterable, e as unknown as MouseEvent);
-													}
-												}}
-												role="button"
-												tabIndex={0}
-											>
-												<div className="header-content">
-													<span>{config.label}</span>
-													{config.sortable && sortColumn === columnId && (
-														<span className="status-icon">
-															{sortDirection === 'asc' ? (
-																<ChevronUp size={14} />
-															) : (
-																<ChevronDown size={14} />
-															)}
-														</span>
-													)}
-													{config.filterable === 'format' && selectedFormats.length > 0 && (
-														<span className="status-icon status-icon-active">
-															<Filter size={12} />
-														</span>
-													)}
-													{config.filterable === 'tags' && selectedTags.length > 0 && (
-														<span className="status-icon status-icon-active">
-															<Filter size={12} />
-														</span>
-													)}
-
-													{config.filterable === 'format' && activePopover === 'format' && (
-														<div
-															className="filter-popover"
-															onClick={(e) => e.stopPropagation()}
-															onKeyDown={(e) => e.stopPropagation()}
-															role="presentation"
-														>
-															<div className="filter-popover-header">Filter Formats</div>
-															<div className="filter-popover-list">
-																{allFormats.map((format) => (
-																	<label key={format} className="filter-popover-item">
-																		<div className="checkbox">
-																			<input
-																				type="checkbox"
-																				checked={selectedFormats.includes(format)}
-																				onChange={() => toggleFormatFilter(format)}
-																			/>
-																			<span className="checkbox-mark" />
-																		</div>
-																		<span className="item-label">{format}</span>
-																	</label>
-																))}
-															</div>
-															{selectedFormats.length > 0 && (
-																<button
-																	type="button"
-																	className="clear-btn"
-																	onClick={() => {
-																		settingsStore.selectedFormats = [];
-																		settingsStore.notify();
-																	}}
-																>
-																	Clear All
-																</button>
-															)}
-														</div>
-													)}
-													{config.filterable === 'tags' && activePopover === 'tags' && (
-														<div
-															className="filter-popover"
-															onClick={(e) => e.stopPropagation()}
-															onKeyDown={(e) => e.stopPropagation()}
-															role="presentation"
-														>
-															<div className="filter-popover-header">Filter Tags</div>
-															<div className="filter-popover-list">
-																{allTags.map((tag) => (
-																	<label key={tag} className="filter-popover-item">
-																		<div className="checkbox">
-																			<input
-																				type="checkbox"
-																				checked={selectedTags.includes(tag)}
-																				onChange={() => toggleTagFilter(tag)}
-																			/>
-																			<span className="checkbox-mark" />
-																		</div>
-																		<span className="item-label">{tag}</span>
-																	</label>
-																))}
-															</div>
-															{selectedTags.length > 0 && (
-																<button
-																	type="button"
-																	className="clear-btn"
-																	onClick={() => {
-																		settingsStore.selectedTags = [];
-																		settingsStore.notify();
-																	}}
-																>
-																	Clear All
-																</button>
-															)}
-														</div>
-													)}
-												</div>
+						<div className="empty-state">
+							<FolderOpen size={48} />
+							<h2>No collection open</h2>
+							<p>Select a folder to start managing your audio files</p>
+							<button
+								type="button"
+								className="open-btn"
+								onClick={() => collectionStore.openCollection()}
+							>
+								Open Collection
+							</button>
+						</div>
+					) : showSwitchingUi ? (
+						<div className="empty-state">
+							<Loader2 size={48} className="animate-spin" />
+							<h2>Opening library</h2>
+							<p>{collectionDisplayName(switchingToPath ?? collectionPath)}</p>
+						</div>
+					) : loading && files.length === 0 ? (
+						<div className="empty-state">
+							<Loader2 size={48} className="animate-spin" />
+							<p>Scanning files…</p>
+						</div>
+					) : files.length === 0 ? (
+						<div className="empty-state">
+							<Filter size={48} />
+							<h2>No audio files found</h2>
+							<p>Try adding some audio files to the folder or drag them in</p>
+						</div>
+					) : (
+						<>
+							{visibleWindow.topPad > 0 && (
+								<div aria-hidden style={{ height: visibleWindow.topPad, flexShrink: 0 }} />
+							)}
+							<table className={`file-table${!showCheckboxes ? ' file-table-no-checkboxes' : ''}`}>
+								<thead>
+									<tr>
+										{showCheckboxes && (
+											<th className="checkbox-col">
+												<label className="checkbox">
+													<input
+														ref={selectAllRef}
+														type="checkbox"
+														checked={allSelected}
+														onChange={toggleAll}
+													/>
+													<span className="checkbox-mark" />
+												</label>
 											</th>
+										)}
+										{columnOrder.map((columnId) => {
+											const config = columnConfigs[columnId];
+											return (
+												<th
+													key={columnId}
+													data-column-id={columnId}
+													className={`${columnId}-col${config.sortable ? ' sortable-th' : ''}${config.filterable ? ' filterable-th' : ''}${draggingColumn === columnId ? ' dragging-th' : ''}${dragOverColumn === columnId && draggingColumn !== columnId ? ' drop-target-th' : ''}`}
+													onClick={(e) => {
+														if (columnDidDragRef.current) {
+															columnDidDragRef.current = false;
+															return;
+														}
+														if (config.sortable) toggleSort(columnId);
+														else if (config.filterable) toggleFilterPopover(config.filterable, e);
+													}}
+													onMouseDown={(e) => {
+														if (e.button !== 0) return;
+														beginColumnDrag(columnId, e.clientX, e.clientY);
+													}}
+													onKeyDown={(e) => {
+														if (e.key === 'Enter') {
+															if (config.sortable) toggleSort(columnId);
+															else if (config.filterable)
+																toggleFilterPopover(config.filterable, e as unknown as MouseEvent);
+														}
+													}}
+													role="button"
+													tabIndex={0}
+												>
+													<div className="header-content">
+														<span>{config.label}</span>
+														{config.sortable && sortColumn === columnId && (
+															<span className="status-icon">
+																{sortDirection === 'asc' ? (
+																	<ChevronUp size={14} />
+																) : (
+																	<ChevronDown size={14} />
+																)}
+															</span>
+														)}
+														{config.filterable === 'format' && selectedFormats.length > 0 && (
+															<span className="status-icon status-icon-active">
+																<Filter size={12} />
+															</span>
+														)}
+														{config.filterable === 'tags' && selectedTags.length > 0 && (
+															<span className="status-icon status-icon-active">
+																<Filter size={12} />
+															</span>
+														)}
+
+														{config.filterable === 'format' && activePopover === 'format' && (
+															<div
+																className="filter-popover"
+																onClick={(e) => e.stopPropagation()}
+																onKeyDown={(e) => e.stopPropagation()}
+																role="presentation"
+															>
+																<div className="filter-popover-header">Filter Formats</div>
+																<div className="filter-popover-list">
+																	{allFormats.map((format) => (
+																		<label key={format} className="filter-popover-item">
+																			<div className="checkbox">
+																				<input
+																					type="checkbox"
+																					checked={selectedFormats.includes(format)}
+																					onChange={() => toggleFormatFilter(format)}
+																				/>
+																				<span className="checkbox-mark" />
+																			</div>
+																			<span className="item-label">{format}</span>
+																		</label>
+																	))}
+																</div>
+																{selectedFormats.length > 0 && (
+																	<button
+																		type="button"
+																		className="clear-btn"
+																		onClick={() => {
+																			settingsStore.selectedFormats = [];
+																			settingsStore.notify();
+																		}}
+																	>
+																		Clear All
+																	</button>
+																)}
+															</div>
+														)}
+														{config.filterable === 'tags' && activePopover === 'tags' && (
+															<div
+																className="filter-popover"
+																onClick={(e) => e.stopPropagation()}
+																onKeyDown={(e) => e.stopPropagation()}
+																role="presentation"
+															>
+																<div className="filter-popover-header">Filter Tags</div>
+																<div className="filter-popover-list">
+																	{allTags.map((tag) => (
+																		<label key={tag} className="filter-popover-item">
+																			<div className="checkbox">
+																				<input
+																					type="checkbox"
+																					checked={selectedTags.includes(tag)}
+																					onChange={() => toggleTagFilter(tag)}
+																				/>
+																				<span className="checkbox-mark" />
+																			</div>
+																			<span className="item-label">{tag}</span>
+																		</label>
+																	))}
+																</div>
+																{selectedTags.length > 0 && (
+																	<button
+																		type="button"
+																		className="clear-btn"
+																		onClick={() => {
+																			settingsStore.selectedTags = [];
+																			settingsStore.notify();
+																		}}
+																	>
+																		Clear All
+																	</button>
+																)}
+															</div>
+														)}
+													</div>
+												</th>
+											);
+										})}
+									</tr>
+								</thead>
+								<tbody>
+									{visibleWindow.slice.map((file, offset) => {
+										const i = visibleWindow.startIdx + offset;
+										return (
+											<FileRow
+												key={file.id}
+												file={file}
+												index={i}
+												showCheckboxes={showCheckboxes}
+												columnOrder={columnOrder}
+												taggingFileId={taggingFile?.id ?? null}
+												newTagValue={newTagValue}
+												onTagInputRef={setTagInputRefCallback}
+												onNewTagValueChange={setNewTagValue}
+												onSelection={handleSelection}
+												onContextMenu={handleContextMenu}
+												onCloseTagDialog={closeTagDialog}
+												onAddTag={onAddTag}
+												onRemoveTag={onRemoveTag}
+												onStartTagging={onStartTagging}
+											/>
 										);
 									})}
-								</tr>
-							</thead>
-							<tbody>
-								{displayedFiles.map((file, i) => (
-									<FileRow
-										key={file.id}
-										file={file}
-										index={i}
-										showCheckboxes={showCheckboxes}
-										columnOrder={columnOrder}
-										collectionPath={collectionPath}
-										taggingFileId={taggingFile?.id ?? null}
-										newTagValue={newTagValue}
-										onTagInputRef={(el) => {
-											tagInputRef.current = el;
-										}}
-										onNewTagValueChange={setNewTagValue}
-										onSelection={handleSelection}
-										onContextMenu={handleContextMenu}
-										onCloseTagDialog={closeTagDialog}
-										onAddTag={() => void handleAddTag()}
-										onRemoveTag={(f, tag) => void removeTag(f, tag)}
-										onStartTagging={(f) => {
-											setTaggingFile(f);
-											setNewTagValue('');
-										}}
-									/>
-								))}
-							</tbody>
-					</table>
-				)}
+								</tbody>
+							</table>
+							{visibleWindow.bottomPad > 0 && (
+								<div aria-hidden style={{ height: visibleWindow.bottomPad, flexShrink: 0 }} />
+							)}
+						</>
+					)}
 				</div>
 			</div>
 		</>

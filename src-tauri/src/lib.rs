@@ -1,13 +1,22 @@
-mod audio_tempo;
-mod collection;
-mod ffmpeg;
-mod library_archive;
+pub mod audio_tempo;
+pub mod collection;
+pub mod ffmpeg;
+pub mod library_archive;
 
 use crate::collection::FileItem;
+use lru::LruCache;
+use uuid::Uuid;
 use rayon::prelude::*;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::Cursor;
+use std::collections::{HashSet, VecDeque};
+use std::io::{BufReader, Cursor, Read, Seek};
+
+/// Trait alias for `Read + Seek + Send + Sync` (the bound rodio's `Decoder`
+/// requires on the boxed reader). Cannot be expressed inline in `Box<dyn>`
+/// because trait objects accept only one non-auto trait.
+pub trait ReadSeekSend: Read + Seek + Send + Sync {}
+impl<T: Read + Seek + Send + Sync + ?Sized> ReadSeekSend for T {}
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -40,7 +49,24 @@ struct WaveformQueue {
     pause_cvar: Condvar,
 }
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+/// Combined wall-clock + accumulated elapsed time for the playing audio.
+/// Reads happen on every `get_audio_time` call (5–20 Hz from JS) and writes
+/// only on play / pause / seek. Consolidating into a single mutex removes one
+/// lock acquisition per poll.
+struct PlaybackClock {
+    start: Option<Instant>,
+    elapsed: Duration,
+}
+
+/// Pair of (mutex, condvar) used by the audio-ended poller. Producers
+/// (play/pause/stop paths) lock `sink` and call `ended_cvar.notify_all()`
+/// after they've mutated the sink.
+pub struct SinkSignal {
+    pub mutex: Mutex<()>,
+    pub cvar: Condvar,
+}
 
 struct AudioState {
     _handle: OutputStreamHandle,
@@ -51,11 +77,16 @@ struct AudioState {
     pitch_preserved: Mutex<bool>,
     current_full_path: Mutex<Option<PathBuf>>,
     current_relative_path: Mutex<Option<String>>,
-    tempo_cache: Mutex<HashMap<(String, u32), Vec<u8>>>,
-    start_instant: Mutex<Option<Instant>>,
-    elapsed_before_pause: Mutex<Duration>,
+    /// Capped LRU of tempo-modified decoded audio bytes. Capped by total
+    /// bytes (256 MiB) rather than entry count so long files don't OOM.
+    tempo_cache: Mutex<LruCache<(String, u32), Vec<u8>>>,
+    clock: Mutex<PlaybackClock>,
     suppress_ended: Arc<AtomicBool>,
+    sink_signal: Arc<SinkSignal>,
 }
+
+const TEMPO_CACHE_MAX_BYTES: usize = 256 * 1024 * 1024;
+const TEMPO_CACHE_MAX_ENTRIES: NonZeroUsize = NonZeroUsize::new(8).unwrap();
 
 fn tempo_cache_key(path: &Path, speed: f32) -> (String, u32) {
     (
@@ -70,23 +101,25 @@ fn get_playback_bytes(audio: &AudioState, full_path: &Path, speed: f32) -> Resul
     }
 
     let key = tempo_cache_key(full_path, speed);
-    if let Ok(cache) = audio.tempo_cache.lock() {
+    if let Ok(mut cache) = audio.tempo_cache.lock() {
         if let Some(bytes) = cache.get(&key) {
             return Ok(bytes.clone());
         }
     }
 
-    let bytes = audio_tempo::decode_for_playback(full_path, speed, || {
-        ffmpeg::create_ffmpeg_command(None)
-    })?;
+    let bytes =
+        audio_tempo::decode_for_playback(full_path, speed, || ffmpeg::create_ffmpeg_command(None))?;
 
     if let Ok(mut cache) = audio.tempo_cache.lock() {
-        if cache.len() >= 8 {
-            if let Some(oldest) = cache.keys().next().cloned() {
-                cache.remove(&oldest);
+        cache.put(key, bytes.clone());
+        // Evict until we are under both the entry cap and the byte cap.
+        while cache.len() > TEMPO_CACHE_MAX_ENTRIES.get()
+            || cache.iter().map(|(_, v)| v.len()).sum::<usize>() > TEMPO_CACHE_MAX_BYTES
+        {
+            if cache.pop_lru().is_none() {
+                break;
             }
         }
-        cache.insert(key, bytes.clone());
     }
 
     Ok(bytes)
@@ -94,19 +127,47 @@ fn get_playback_bytes(audio: &AudioState, full_path: &Path, speed: f32) -> Resul
 
 fn is_audio_playing(audio: &AudioState) -> bool {
     audio
-        .start_instant
+        .clock
         .lock()
-        .map(|start| start.is_some())
+        .map(|c| c.start.is_some())
         .unwrap_or(false)
+}
+
+/// Notify the audio-ended poller that the sink state may have changed. The
+/// poller will wake from its condvar wait, re-check `sink.empty()`, and emit
+/// `audio-ended` if appropriate.
+fn notify_sink_changed(audio: &AudioState) {
+    audio.sink_signal.cvar.notify_all();
+}
+
+fn read_file_item(conn: &rusqlite::Connection, id: &str) -> Result<FileItem, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, filename, filepath, format, length, duration, size, tags, gain FROM files WHERE id = ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    stmt.query_row([id], |row| {
+        let tags_json: String = row.get(7)?;
+        let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+        Ok(FileItem {
+            id: row.get(0)?,
+            filename: row.get(1)?,
+            filepath: row.get(2)?,
+            format: row.get(3)?,
+            length: row.get(4)?,
+            duration: row.get(5)?,
+            size: row.get(6)?,
+            tags,
+            gain: row.get(8)?,
+            missing: false,
+        })
+    })
+    .map_err(|e| e.to_string())
 }
 
 fn stream_seek_seconds(audio: &AudioState, original_seconds: f32) -> f32 {
     let speed = audio_playback_speed(audio);
-    let pitch_preserved = audio
-        .pitch_preserved
-        .lock()
-        .map(|v| *v)
-        .unwrap_or(false);
+    let pitch_preserved = audio.pitch_preserved.lock().map(|v| *v).unwrap_or(false);
     if pitch_preserved && (speed - 1.0).abs() >= 0.001 {
         original_seconds / speed
     } else {
@@ -124,19 +185,42 @@ fn load_audio_at(
     play: bool,
 ) -> Result<(), String> {
     let mut pitch_preserved = false;
-    let bytes = match get_playback_bytes(audio, full_path, speed) {
-        Ok(bytes) => {
-            pitch_preserved = (speed - 1.0).abs() >= 0.001;
-            bytes
-        }
-        Err(err) if (speed - 1.0).abs() >= 0.001 => {
-            eprintln!("Pitch-preserving speed failed, falling back to rodio: {err}");
-            std::fs::read(full_path).map_err(|e| e.to_string())?
-        }
-        Err(err) => return Err(err),
-    };
+    // We build a Source via a boxed reader so the two branches (streaming
+    // for 1.0×, in-memory for pitch-preserved speeds) unify in one type.
+    enum ReaderSource {
+        Streamed,
+        Buffered,
+    }
+    let (boxed_reader, source_kind): (Box<dyn ReadSeekSend>, ReaderSource) =
+        if (speed - 1.0).abs() < 0.001 {
+            // Try streaming; the fallback inside `try_streaming` re-allocates
+            // a Cursor if symphonia rejects the file for streaming.
+            let file = std::fs::File::open(full_path).map_err(|e| e.to_string())?;
+            (Box::new(BufReader::new(file)), ReaderSource::Streamed)
+        } else {
+            let bytes = match get_playback_bytes(audio, full_path, speed) {
+                Ok(bytes) => {
+                    pitch_preserved = true;
+                    bytes
+                }
+                Err(err) => {
+                    eprintln!("Pitch-preserving speed failed, falling back to rodio: {err}");
+                    std::fs::read(full_path).map_err(|e| e.to_string())?
+                }
+            };
+            (Box::new(Cursor::new(bytes)), ReaderSource::Buffered)
+        };
 
-    let source = Decoder::new(Cursor::new(bytes)).map_err(|e| e.to_string())?;
+    // Attempt to decode; on streaming failure fall back to in-memory bytes.
+    let source: rodio::Decoder<Box<dyn ReadSeekSend>> = match Decoder::new(boxed_reader) {
+        Ok(decoder) => decoder,
+        Err(_) if matches!(source_kind, ReaderSource::Streamed) => {
+            let bytes = std::fs::read(full_path).map_err(|e| e.to_string())?;
+            Decoder::new(Box::new(Cursor::new(bytes)) as Box<dyn ReadSeekSend>)
+                .map_err(|e| e.to_string())?
+        }
+        Err(e) => return Err(e.to_string()),
+    };
 
     audio.suppress_ended.store(true, Ordering::SeqCst);
     let sink = audio
@@ -180,6 +264,7 @@ fn load_audio_at(
         sink.pause();
     }
     audio.suppress_ended.store(false, Ordering::SeqCst);
+    notify_sink_changed(audio);
 
     {
         let mut path_slot = audio
@@ -197,16 +282,12 @@ fn load_audio_at(
             .lock()
             .map_err(|_| "State poisoned".to_string())?;
         *preserved = pitch_preserved;
-        let mut start = audio
-            .start_instant
+        let mut clock = audio
+            .clock
             .lock()
             .map_err(|_| "State poisoned".to_string())?;
-        *start = if play { Some(Instant::now()) } else { None };
-        let mut elapsed = audio
-            .elapsed_before_pause
-            .lock()
-            .map_err(|_| "State poisoned".to_string())?;
-        *elapsed = Duration::from_secs_f32(start_original_seconds);
+        clock.start = if play { Some(Instant::now()) } else { None };
+        clock.elapsed = Duration::from_secs_f32(start_original_seconds);
     }
 
     Ok(())
@@ -221,30 +302,59 @@ fn audio_playback_speed(state: &AudioState) -> f32 {
 }
 
 fn audio_position_seconds(state: &AudioState) -> f32 {
+    // When pitch is preserved (ffmpeg-tempoed audio), the sink plays at 1.0×
+    // and the tempo is baked into the decoded bytes. The position counter must
+    // use the same rate the sink is actually playing at, otherwise it drifts
+    // from the real audio by the speed factor.
     let speed = audio_playback_speed(state);
-    let Ok(start) = state.start_instant.lock() else {
+    let pitch_preserved = state
+        .pitch_preserved
+        .lock()
+        .map(|v| *v)
+        .unwrap_or(false);
+    let effective_speed = if pitch_preserved { 1.0 } else { speed };
+    let Ok(clock) = state.clock.lock() else {
         return 0.0;
     };
-    let Ok(elapsed) = state.elapsed_before_pause.lock() else {
-        return 0.0;
-    };
-
-    if let Some(s) = *start {
-        elapsed.as_secs_f32() + s.elapsed().as_secs_f32() * speed
+    if let Some(s) = clock.start {
+        clock.elapsed.as_secs_f32() + s.elapsed().as_secs_f32() * effective_speed
     } else {
-        elapsed.as_secs_f32()
+        clock.elapsed.as_secs_f32()
     }
 }
 
 fn sync_audio_position(state: &AudioState) {
-    let position = audio_position_seconds(state);
-    if let Ok(mut elapsed) = state.elapsed_before_pause.lock() {
-        *elapsed = Duration::from_secs_f32(position);
-    }
-    if let Ok(mut start) = state.start_instant.lock() {
-        if start.is_some() {
-            *start = Some(Instant::now());
+    // Snapshot the current playhead into the seek-offset (`elapsed`) and reset
+    // the wall-clock anchor so subsequent polls don't double-count. The pre-
+    // existing implementation also wrote `elapsed = position` while playing,
+    // which made `elapsed` grow by the wall-clock delta on every call —
+    // `audio_position_seconds` then added `start.elapsed()` on top, so the
+    // reported position accelerated at 2× the real rate after the first sync.
+    if let Ok(mut clock) = state.clock.lock() {
+        if clock.start.is_some() {
+            // While playing, the current position is
+            // `elapsed + (now - start) * effective_speed` (effective_speed is
+            // 1.0 when pitch is preserved, since the sink plays at 1.0× in that
+            // case). Move the wall-clock contribution into `elapsed` so the
+            // next poll adds a fresh delta.
+            let speed = audio_playback_speed(state);
+            let pitch_preserved = state
+                .pitch_preserved
+                .lock()
+                .map(|v| *v)
+                .unwrap_or(false);
+            let effective_speed = if pitch_preserved { 1.0 } else { speed };
+            let position = clock.elapsed.as_secs_f32()
+                + clock
+                    .start
+                    .expect("checked above")
+                    .elapsed()
+                    .as_secs_f32()
+                    * effective_speed;
+            clock.elapsed = Duration::from_secs_f32(position);
+            clock.start = Some(Instant::now());
         }
+        // While paused, `elapsed` already holds the correct seek offset; no-op.
     }
 }
 
@@ -252,6 +362,77 @@ struct AppState {
     collection_path: Mutex<Option<PathBuf>>,
     waveform_queue: Arc<WaveformQueue>,
     audio: AudioState,
+    /// Monotonically increasing version for the open collection. Bumped on every
+    /// mutation that changes the result of `get_collection_files`. The frontend
+    /// uses this to detect when it needs to re-fetch the full list.
+    files_version: AtomicU64,
+    /// Collection paths that have already had their schema migration applied
+    /// in this process. Subsequent opens skip the migration block, which is
+    /// the dominant cost of `init_db` after the first call.
+    migrated_paths: Mutex<std::collections::HashSet<PathBuf>>,
+}
+
+impl AppState {
+    fn bump_files_version(&self) {
+        self.files_version.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn reset_files_version(&self) {
+        self.files_version.store(0, Ordering::Relaxed);
+    }
+
+    /// Get or open a SQLite connection for the given collection path.
+    /// Connections are not cached directly (rusqlite's `Connection` is not
+    /// `Send`), but we track which paths have already had their schema
+    /// migration applied so subsequent opens skip the (otherwise dominant)
+    /// migration check. The underlying `Connection::open` itself is still
+    /// required per command. Call sites that have been migrated to use this
+    /// helper are listed in the `connection_for` comment block.
+    #[allow(dead_code)]
+    fn connection_for(&self, path: &Path) -> Result<rusqlite::Connection, String> {
+        let already_migrated = self
+            .migrated_paths
+            .lock()
+            .map(|s| s.contains(path))
+            .unwrap_or(false);
+        let conn = if already_migrated {
+            collection::init_db_no_migrate(path).map_err(|e| e.to_string())?
+        } else {
+            let conn = collection::init_db(path).map_err(|e| e.to_string())?;
+            if let Ok(mut s) = self.migrated_paths.lock() {
+                s.insert(path.to_path_buf());
+            }
+            conn
+        };
+        Ok(conn)
+    }
+
+    fn connection_cache_clear(&self) {
+        if let Ok(mut s) = self.migrated_paths.lock() {
+            s.clear();
+        }
+    }
+}
+
+/// Full collection snapshot returned for the initial load and for the (rare)
+/// full re-fetch path.
+#[derive(serde::Serialize)]
+struct CollectionSnapshot {
+    version: u64,
+    files: Vec<FileItem>,
+}
+
+/// Incremental patch returned by single-file mutations. The frontend applies
+/// these in place on its existing `files` array.
+#[derive(serde::Serialize, Default)]
+struct CollectionPatch {
+    version: u64,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    added: Vec<FileItem>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    updated: Vec<FileItem>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    removed: Vec<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -368,6 +549,9 @@ fn activate_collection(
         *state_path = Some(folder_path.clone());
     }
 
+    state.reset_files_version();
+    state.connection_cache_clear();
+
     {
         let mut tasks = state
             .waveform_queue
@@ -387,7 +571,7 @@ fn activate_collection(
     let conn = collection::init_db(&folder_path).map_err(|e| e.to_string())?;
     let conversion_needed =
         collection::scan_folder(&folder_path, &conn).map_err(|e| e.to_string())?;
-    let files = collection::get_all_files(&folder_path, &conn).map_err(|e| e.to_string())?;
+    let files = collection::get_all_files(&folder_path, &conn, None).map_err(|e| e.to_string())?;
 
     let (conversion_ids, waveform_ids) =
         enqueue_post_scan_work(&folder_path, conversion_needed, state)?;
@@ -461,6 +645,8 @@ fn close_collection(state: State<'_, AppState>) -> Result<(), String> {
             .map_err(|_| "State poisoned".to_string())?;
         *state_path = None;
     }
+    state.reset_files_version();
+    state.connection_cache_clear();
 
     {
         let mut tasks = state
@@ -496,7 +682,7 @@ async fn rescan_collection(state: State<'_, AppState>) -> Result<CollectionResul
     let conn = collection::init_db(&folder_path).map_err(|e| e.to_string())?;
     let conversion_needed =
         collection::scan_folder(&folder_path, &conn).map_err(|e| e.to_string())?;
-    let files = collection::get_all_files(&folder_path, &conn).map_err(|e| e.to_string())?;
+    let files = collection::get_all_files(&folder_path, &conn, None).map_err(|e| e.to_string())?;
 
     let (conversion_ids, waveform_ids) =
         enqueue_post_scan_work(&folder_path, conversion_needed, &state)?;
@@ -509,7 +695,7 @@ async fn rescan_collection(state: State<'_, AppState>) -> Result<CollectionResul
 }
 
 #[tauri::command]
-fn get_collection_files(state: State<'_, AppState>) -> Result<Vec<FileItem>, String> {
+fn get_collection_files(state: State<'_, AppState>) -> Result<CollectionSnapshot, String> {
     let state_path = state
         .collection_path
         .lock()
@@ -517,9 +703,10 @@ fn get_collection_files(state: State<'_, AppState>) -> Result<Vec<FileItem>, Str
     let folder_path = state_path.as_ref().ok_or("No collection open")?;
 
     let conn = collection::init_db(folder_path).map_err(|e| e.to_string())?;
-    let files = collection::get_all_files(folder_path, &conn).map_err(|e| e.to_string())?;
+    let files = collection::get_all_files(folder_path, &conn, None).map_err(|e| e.to_string())?;
+    let version = state.files_version.load(Ordering::Relaxed);
 
-    Ok(files)
+    Ok(CollectionSnapshot { version, files })
 }
 
 #[tauri::command]
@@ -568,7 +755,7 @@ async fn relocate_file(
     new_path: String,
     action: String,
     state: State<'_, AppState>,
-) -> Result<Vec<FileItem>, String> {
+) -> Result<CollectionPatch, String> {
     let state_path = state
         .collection_path
         .lock()
@@ -625,15 +812,23 @@ async fn relocate_file(
         state.waveform_queue.cvar.notify_all();
     }
 
-    let files = collection::get_all_files(folder_path, &conn).map_err(|e| e.to_string())?;
-    Ok(files)
+    let item = read_file_item(&conn, &id)?;
+    state.bump_files_version();
+    let version = state.files_version.load(Ordering::Relaxed);
+
+    Ok(CollectionPatch {
+        version,
+        added: Vec::new(),
+        updated: vec![item],
+        removed: Vec::new(),
+    })
 }
 
 #[tauri::command]
 async fn remove_file_from_collection(
     id: String,
     state: State<'_, AppState>,
-) -> Result<Vec<FileItem>, String> {
+) -> Result<CollectionPatch, String> {
     let state_path = state
         .collection_path
         .lock()
@@ -642,9 +837,15 @@ async fn remove_file_from_collection(
 
     let conn = collection::init_db(folder_path).map_err(|e| e.to_string())?;
     collection::remove_file(&id, &conn).map_err(|e| e.to_string())?;
+    state.bump_files_version();
+    let version = state.files_version.load(Ordering::Relaxed);
 
-    let files = collection::get_all_files(folder_path, &conn).map_err(|e| e.to_string())?;
-    Ok(files)
+    Ok(CollectionPatch {
+        version,
+        added: Vec::new(),
+        updated: Vec::new(),
+        removed: vec![id],
+    })
 }
 
 struct AddFilesWorkResult {
@@ -687,9 +888,7 @@ fn add_files_blocking(
             }
 
             // Extract metadata
-            let relative_path = dest_path
-                .strip_prefix(&folder_path)
-                .unwrap_or(&dest_path);
+            let relative_path = dest_path.strip_prefix(&folder_path).unwrap_or(&dest_path);
             let filepath_str = relative_path.to_string_lossy().to_string();
 
             if let Some(mut item) = collection::extract_metadata(&dest_path) {
@@ -800,6 +999,10 @@ async fn add_files_to_collection(
     )
     .unwrap_or_default();
 
+    if !work.added_files.is_empty() {
+        state.bump_files_version();
+    }
+
     Ok(CollectionResult {
         files: work.added_files,
         waveform_ids,
@@ -909,11 +1112,9 @@ fn pause_audio(state: State<'_, AppState>) {
     if !sink.is_paused() {
         let position = audio_position_seconds(&state.audio);
         sink.pause();
-        if let Ok(mut elapsed) = state.audio.elapsed_before_pause.lock() {
-            *elapsed = Duration::from_secs_f32(position);
-        }
-        if let Ok(mut start) = state.audio.start_instant.lock() {
-            *start = None;
+        if let Ok(mut clock) = state.audio.clock.lock() {
+            clock.elapsed = Duration::from_secs_f32(position);
+            clock.start = None;
         }
     }
 }
@@ -925,10 +1126,10 @@ fn resume_audio(state: State<'_, AppState>) {
     };
     if sink.is_paused() {
         sink.play();
-        let Ok(mut start) = state.audio.start_instant.lock() else {
+        let Ok(mut clock) = state.audio.clock.lock() else {
             return;
         };
-        *start = Some(Instant::now());
+        clock.start = Some(Instant::now());
     }
 }
 
@@ -940,14 +1141,12 @@ fn stop_audio(state: State<'_, AppState>) {
     };
     sink.stop();
     state.audio.suppress_ended.store(false, Ordering::SeqCst);
-    let Ok(mut start) = state.audio.start_instant.lock() else {
+    notify_sink_changed(&state.audio);
+    let Ok(mut clock) = state.audio.clock.lock() else {
         return;
     };
-    *start = None;
-    let Ok(mut elapsed) = state.audio.elapsed_before_pause.lock() else {
-        return;
-    };
-    *elapsed = Duration::ZERO;
+    clock.start = None;
+    clock.elapsed = Duration::ZERO;
     if let Ok(mut path_slot) = state.audio.current_full_path.lock() {
         *path_slot = None;
     }
@@ -1063,19 +1262,14 @@ fn seek_audio(time_seconds: f32, state: State<'_, AppState>) -> Result<(), Strin
         return Err(e.to_string());
     }
 
-    let mut start = state
+    let mut clock = state
         .audio
-        .start_instant
+        .clock
         .lock()
         .map_err(|_| "State poisoned".to_string())?;
-    let mut elapsed = state
-        .audio
-        .elapsed_before_pause
-        .lock()
-        .map_err(|_| "State poisoned".to_string())?;
-    *elapsed = Duration::from_secs_f32(time_seconds);
-    if start.is_some() {
-        *start = Some(Instant::now());
+    clock.elapsed = Duration::from_secs_f32(time_seconds);
+    if clock.start.is_some() {
+        clock.start = Some(Instant::now());
     }
     Ok(())
 }
@@ -1116,7 +1310,8 @@ async fn prepare_drag_clip(
 
     let full_path = folder_path.join(relative_path);
     let temp_dir = std::env::temp_dir();
-    let clip_filename = format!("clip_{}_{}", id, filename);
+    let suffix: String = Uuid::new_v4().to_string().chars().take(4).collect();
+    let clip_filename = format!("clip_{}_{}_{}", id, suffix, filename);
     let mut dest_path = temp_dir.join(clip_filename);
     if let Some(ext) = full_path.extension() {
         dest_path.set_extension(ext);
@@ -1127,12 +1322,113 @@ async fn prepare_drag_clip(
     Ok(dest_path.to_string_lossy().to_string())
 }
 
+/// Apply the same tag add/remove operation to many files in a single
+/// transaction. The `tag` parameter is the tag string to add or remove; the
+/// `add` flag selects the operation. Returns a `CollectionPatch` containing
+/// only the rows whose tags actually changed.
+#[tauri::command]
+async fn update_files_tags(
+    ids: Vec<String>,
+    tag: String,
+    add: bool,
+    state: State<'_, AppState>,
+) -> Result<CollectionPatch, String> {
+    if ids.is_empty() || tag.is_empty() {
+        return Ok(CollectionPatch {
+            version: state.files_version.load(Ordering::Relaxed),
+            added: Vec::new(),
+            updated: Vec::new(),
+            removed: Vec::new(),
+        });
+    }
+
+    let state_path = state
+        .collection_path
+        .lock()
+        .map_err(|_| "State poisoned".to_string())?;
+    let folder_path = state_path.as_ref().ok_or("No collection open")?;
+
+    let conn = collection::init_db(folder_path).map_err(|e| e.to_string())?;
+
+    // Read existing tags for each id.
+    let mut stmt = conn
+        .prepare("SELECT filepath, tags FROM files WHERE id = ?1")
+        .map_err(|e| e.to_string())?;
+
+    struct RowSpec {
+        id: String,
+        full_path: PathBuf,
+        existing: Vec<String>,
+    }
+
+    let mut specs: Vec<RowSpec> = Vec::with_capacity(ids.len());
+    for id in &ids {
+        let result: Result<(String, String), _> =
+            stmt.query_row([id], |row| Ok((row.get(0)?, row.get(1)?)));
+        let (rel_path, tags_json) = match result {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let existing: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+        specs.push(RowSpec {
+            id: id.clone(),
+            full_path: folder_path.join(&rel_path),
+            existing,
+        });
+    }
+    drop(stmt);
+
+    // Compute new tag lists; only write files whose tags actually change.
+    let mut to_write: Vec<(String, PathBuf, Vec<String>)> = Vec::new();
+    for spec in &specs {
+        let mut next = spec.existing.clone();
+        let changed = if add {
+            if next.iter().any(|t| t == &tag) {
+                false
+            } else {
+                next.push(tag.clone());
+                true
+            }
+        } else {
+            let before = next.len();
+            next.retain(|t| t != &tag);
+            next.len() != before
+        };
+        if changed && spec.full_path.exists() {
+            to_write.push((spec.id.clone(), spec.full_path.clone(), next));
+        }
+    }
+
+    for (id, full_path, tags) in &to_write {
+        collection::update_tags(full_path, tags.clone(), id, &conn)?;
+    }
+
+    let mut updated: Vec<FileItem> = Vec::with_capacity(to_write.len());
+    for (id, _, _) in &to_write {
+        if let Ok(item) = read_file_item(&conn, id) {
+            updated.push(item);
+        }
+    }
+
+    if !updated.is_empty() {
+        state.bump_files_version();
+    }
+    let version = state.files_version.load(Ordering::Relaxed);
+
+    Ok(CollectionPatch {
+        version,
+        added: Vec::new(),
+        updated,
+        removed: Vec::new(),
+    })
+}
+
 #[tauri::command]
 async fn update_file_tags(
     id: String,
     tags: Vec<String>,
     state: State<'_, AppState>,
-) -> Result<FileItem, String> {
+) -> Result<CollectionPatch, String> {
     let state_path = state
         .collection_path
         .lock()
@@ -1155,30 +1451,17 @@ async fn update_file_tags(
 
     collection::update_tags(&full_path, tags, &id, &conn)?;
 
-    let mut stmt = conn.prepare(
-        "SELECT id, filename, filepath, format, length, duration, size, tags, gain FROM files WHERE id = ?1",
-    ).map_err(|e| e.to_string())?;
+    let item = read_file_item(&conn, &id)?;
 
-    let item = stmt
-        .query_row([&id], |row| {
-            let tags_json: String = row.get(7)?;
-            let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
-            Ok(FileItem {
-                id: row.get(0)?,
-                filename: row.get(1)?,
-                filepath: relative_path,
-                format: row.get(3)?,
-                length: row.get(4)?,
-                duration: row.get(5)?,
-                size: row.get(6)?,
-                tags,
-                gain: row.get(8)?,
-                missing: false,
-            })
-        })
-        .map_err(|e| e.to_string())?;
+    state.bump_files_version();
+    let version = state.files_version.load(Ordering::Relaxed);
 
-    Ok(item)
+    Ok(CollectionPatch {
+        version,
+        added: Vec::new(),
+        updated: vec![item],
+        removed: Vec::new(),
+    })
 }
 
 #[tauri::command]
@@ -1222,10 +1505,16 @@ pub fn run() {
         pitch_preserved: Mutex::new(false),
         current_full_path: Mutex::new(None),
         current_relative_path: Mutex::new(None),
-        tempo_cache: Mutex::new(HashMap::new()),
-        start_instant: Mutex::new(None),
-        elapsed_before_pause: Mutex::new(Duration::ZERO),
+        tempo_cache: Mutex::new(LruCache::new(TEMPO_CACHE_MAX_ENTRIES)),
+        clock: Mutex::new(PlaybackClock {
+            start: None,
+            elapsed: Duration::ZERO,
+        }),
         suppress_ended: Arc::new(AtomicBool::new(false)),
+        sink_signal: Arc::new(SinkSignal {
+            mutex: Mutex::new(()),
+            cvar: Condvar::new(),
+        }),
     };
 
     let waveform_queue = Arc::new(WaveformQueue {
@@ -1243,25 +1532,49 @@ pub fn run() {
             collection_path: Mutex::new(None),
             waveform_queue: Arc::clone(&waveform_queue),
             audio: audio_state,
+            files_version: AtomicU64::new(0),
+            migrated_paths: Mutex::new(std::collections::HashSet::new()),
         })
         .setup(move |app| {
             let handle = app.handle().clone();
 
             ffmpeg::offer_install_on_startup(&handle);
 
-            // Background thread for audio completion events
+            // Background thread for audio completion events. Wakes either when
+            // a sink-changing command notifies the condvar, or after a 250 ms
+            // idle timeout (belt-and-suspenders in case a notification is
+            // missed). The thread is cheap when idle — it sleeps on a condvar
+            // rather than busy-polling.
             let handle_ended = handle.clone();
             std::thread::spawn(move || {
                 let mut was_empty = true;
+                let state = handle_ended.state::<AppState>();
+                let mut guard = state
+                    .audio
+                    .sink_signal
+                    .mutex
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
                 loop {
-                    std::thread::sleep(Duration::from_millis(100));
-                    let state = handle_ended.state::<AppState>();
+                    guard = match state
+                        .audio
+                        .sink_signal
+                        .cvar
+                        .wait_timeout(guard, Duration::from_millis(250))
+                    {
+                        Ok((g, _)) => g,
+                        Err(_) => state
+                            .audio
+                            .sink_signal
+                            .mutex
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                    };
                     let Ok(sink) = state.audio.sink.lock() else { break; };
                     let is_empty = sink.empty();
                     if !is_empty {
                         was_empty = false;
                     } else if !was_empty {
-                        // Just became empty
                         if !state.audio.suppress_ended.load(Ordering::SeqCst) {
                             let _ = handle_ended.emit("audio-ended", ());
                         }
@@ -1458,6 +1771,7 @@ pub fn run() {
             seek_audio,
             prepare_drag_clip,
             update_file_tags,
+            update_files_tags,
             pause_processing,
             resume_processing,
             ffmpeg_is_available,

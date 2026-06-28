@@ -7,6 +7,7 @@ import { audioPlayer } from './audio-player';
 import { settingsStore } from './settings-store';
 import { useCollectionVersion, useWaveformProgressVersion } from './store-sync';
 import { collectionDisplayName, collectionPathsEqual } from './collection-path';
+import { timeComputeDisplayed } from './perf';
 
 export interface FileItem {
 	id: string;
@@ -20,6 +21,18 @@ export interface FileItem {
 	gain: number;
 	selected: boolean;
 	missing: boolean;
+}
+
+export interface CollectionSnapshot {
+	version: number;
+	files: Omit<FileItem, 'selected'>[];
+}
+
+export interface CollectionPatch {
+	version: number;
+	added?: Omit<FileItem, 'selected'>[];
+	updated?: Omit<FileItem, 'selected'>[];
+	removed?: string[];
 }
 
 export interface Task {
@@ -63,58 +76,147 @@ class CollectionStore {
 	private waveformProgressNotifyRaf: number | null = null;
 	private pendingLibraryProgress: { progress: number; message?: string } | null = null;
 	tasksPanelRequest = 0;
+	/**
+	 * Version of the last known backend file list. When this drifts from the
+	 * version returned by a Rust command, the frontend should re-fetch the
+	 * full list. Reset to 0 whenever a new collection is opened.
+	 */
+	knownVersion: number = 0;
 	get displayedFiles() {
 		return this.computeDisplayedFiles(this.files);
 	}
 
+	private displayedCacheKey: string | null = null;
+	private displayedCacheResult: FileItem[] | null = null;
+	private sizeSortCache: WeakMap<FileItem[], Map<string, number>> = new WeakMap();
+
+	private buildSizeMap(files: readonly FileItem[]): Map<string, number> {
+		const cached = this.sizeSortCache.get(files as FileItem[]);
+		if (cached) return cached;
+		const map = new Map<string, number>();
+		for (const f of files) {
+			map.set(f.id, this.parseSize(f.size));
+		}
+		this.sizeSortCache.set(files as FileItem[], map);
+		return map;
+	}
+
 	computeDisplayedFiles(source: readonly FileItem[] = this.files) {
-		let result = [...source];
-
 		const query = settingsStore.filenameQuery.trim().toLowerCase();
-		if (query) {
-			result = result.filter((f) => f.filename.toLowerCase().includes(query));
+		const sortCol = settingsStore.sortColumn;
+		const sortDir = settingsStore.sortDirection;
+		const formats = settingsStore.selectedFormats;
+		const tags = settingsStore.selectedTags;
+
+		// Cache key includes the source identity and the active filter/sort settings.
+		// Bumping useCollectionVersion / useSettingsVersion forces React to re-run us,
+		// so we don't need to include version numbers — we just need to make sure the
+		// cache invalidates when the user mutates any of these inputs.
+		const formatsKey = formats.length === 0 ? '' : formats.join(',');
+		const tagsKey = tags.length === 0 ? '' : tags.join(',');
+		const key = `${(source as FileItem[]).length}|${query}|${formatsKey}|${tagsKey}|${sortCol ?? ''}|${sortDir}`;
+
+		if (this.displayedCacheKey === key && this.displayedCacheResult) {
+			return this.displayedCacheResult;
 		}
 
-		if (settingsStore.selectedFormats.length > 0) {
-			result = result.filter((f) => settingsStore.selectedFormats.includes(f.format));
-		}
-		if (settingsStore.selectedTags.length > 0) {
-			result = result.filter((f) => f.tags.some((t) => settingsStore.selectedTags.includes(t)));
-		}
+		const result = timeComputeDisplayed(() => {
+			let out: FileItem[] = [...(source as FileItem[])];
 
-		const col = settingsStore.sortColumn;
-		const dir = settingsStore.sortDirection;
+			if (query) {
+				out = out.filter((f) => f.filename.toLowerCase().includes(query));
+			}
 
-		if (col) {
-			result.sort((a, b) => {
-				let compareA: string | number;
-				let compareB: string | number;
+			if (formats.length > 0) {
+				const fmtSet = new Set(formats);
+				out = out.filter((f) => fmtSet.has(f.format));
+			}
+			if (tags.length > 0) {
+				const tagSet = new Set(tags);
+				out = out.filter((f) => f.tags.some((t) => tagSet.has(t)));
+			}
 
-				if (col === 'length') {
-					compareA = a.duration;
-					compareB = b.duration;
-				} else if (col === 'size') {
-					compareA = this.parseSize(a.size);
-					compareB = this.parseSize(b.size);
-				} else {
-					const valA = a[col as keyof FileItem];
-					const valB = b[col as keyof FileItem];
-					if (typeof valA === 'string' && typeof valB === 'string') {
-						compareA = valA.toLowerCase();
-						compareB = valB.toLowerCase();
+			if (sortCol) {
+				const col = sortCol;
+				const dir = sortDir;
+				const sizeMap = col === 'size' ? this.buildSizeMap(source) : null;
+
+				out.sort((a, b) => {
+					let compareA: string | number;
+					let compareB: string | number;
+
+					if (col === 'length') {
+						compareA = a.duration;
+						compareB = b.duration;
+					} else if (col === 'size') {
+						compareA = sizeMap!.get(a.id) ?? 0;
+						compareB = sizeMap!.get(b.id) ?? 0;
 					} else {
-						compareA = String(valA);
-						compareB = String(valB);
+						const valA = a[col as keyof FileItem];
+						const valB = b[col as keyof FileItem];
+						if (typeof valA === 'string' && typeof valB === 'string') {
+							compareA = valA.toLowerCase();
+							compareB = valB.toLowerCase();
+						} else {
+							compareA = String(valA);
+							compareB = String(valB);
+						}
 					}
-				}
 
-				if (compareA < compareB) return dir === 'asc' ? -1 : 1;
-				if (compareA > compareB) return dir === 'asc' ? 1 : -1;
-				return 0;
-			});
+					if (compareA < compareB) return dir === 'asc' ? -1 : 1;
+					if (compareA > compareB) return dir === 'asc' ? 1 : -1;
+					return 0;
+				});
+			}
+
+			return out;
+		});
+
+		this.displayedCacheKey = key;
+		this.displayedCacheResult = result;
+		return result;
+	}
+
+	invalidateDisplayedCache() {
+		this.displayedCacheKey = null;
+		this.displayedCacheResult = null;
+	}
+
+	/**
+	 * Apply a `CollectionPatch` from the backend in place. Mutates `this.files`
+	 * by inserting new rows, replacing updated rows, and splicing out removed
+	 * rows. Preserves the `selected` flag on replaced rows.
+	 */
+	applyPatch(patch: CollectionPatch) {
+		this.knownVersion = patch.version;
+		this.invalidateDisplayedCache();
+
+		if (patch.removed && patch.removed.length > 0) {
+			const removedSet = new Set(patch.removed);
+			this.files = this.files.filter((f) => !removedSet.has(f.id));
 		}
 
-		return result;
+		if (patch.updated && patch.updated.length > 0) {
+			const indexById = new Map<string, number>();
+			for (let i = 0; i < this.files.length; i++) {
+				indexById.set(this.files[i].id, i);
+			}
+			for (const u of patch.updated) {
+				const idx = indexById.get(u.id);
+				if (idx !== undefined) {
+					const selected = this.files[idx].selected;
+					this.files[idx] = { ...u, selected };
+				}
+			}
+		}
+
+		if (patch.added && patch.added.length > 0) {
+			const existingPaths = new Set(this.files.map((f) => f.filepath));
+			for (const f of patch.added) {
+				if (existingPaths.has(f.filepath)) continue;
+				this.files.push({ ...f, selected: false });
+			}
+		}
 	}
 
 	private parseSize(s: string) {
@@ -359,7 +461,8 @@ class CollectionStore {
 		settingsStore.removeRecentCollection(path);
 		const key = path.replace(/\\/g, '/').replace(/\/+$/, '');
 		if (settingsStore.collectionUiByPath[key]) {
-			const { [key]: _, ...rest } = settingsStore.collectionUiByPath;
+			const rest = { ...settingsStore.collectionUiByPath };
+			delete rest[key];
 			settingsStore.collectionUiByPath = rest;
 			settingsStore.notify();
 		}
@@ -500,10 +603,7 @@ class CollectionStore {
 		return ` - ${mins}m ${secs}s remaining`;
 	}
 
-	private applyProcessingTasks(result: {
-		waveform_ids: string[];
-		conversion_ids: string[];
-	}) {
+	private applyProcessingTasks(result: { waveform_ids: string[]; conversion_ids: string[] }) {
 		const allProcessingIds = [...result.waveform_ids, ...result.conversion_ids];
 		if (allProcessingIds.length > 0) {
 			allProcessingIds.forEach((id) => this.processingFiles.add(id));
@@ -558,6 +658,8 @@ class CollectionStore {
 		conversion_ids: string[];
 	}) {
 		this.files = result.files.map((f) => ({ ...f, selected: false }));
+		this.knownVersion += 1; // Rust also bumped; bump ours to match the new list.
+		this.invalidateDisplayedCache();
 		this.applyProcessingTasks(result);
 		this.notify();
 	}
@@ -660,6 +762,7 @@ class CollectionStore {
 			this.beginSwitchingUi(path);
 			this.loading = true;
 			this.collectionPath = path;
+			this.knownVersion = 0;
 			this.processingFiles = new Set();
 			this.tasks = [];
 			this.processingPaused = false;
@@ -719,8 +822,10 @@ class CollectionStore {
 	async reloadFiles() {
 		if (!this.collectionPath) return;
 		const selectedIds = new Set(this.files.filter((f) => f.selected).map((f) => f.id));
-		const result = await invoke<Omit<FileItem, 'selected'>[]>('get_collection_files');
-		this.files = result.map((f) => ({ ...f, selected: selectedIds.has(f.id) }));
+		const snapshot = await invoke<CollectionSnapshot>('get_collection_files');
+		this.knownVersion = snapshot.version;
+		this.invalidateDisplayedCache();
+		this.files = snapshot.files.map((f) => ({ ...f, selected: selectedIds.has(f.id) }));
 		this.notify();
 	}
 
@@ -803,12 +908,12 @@ class CollectionStore {
 					});
 
 					this.loading = true;
-					const result = await invoke<Omit<FileItem, 'selected'>[]>('relocate_file', {
+					const patch = await invoke<CollectionPatch>('relocate_file', {
 						id,
 						newPath: selected,
 						action: 'link'
 					});
-					this.files = result.map((f) => ({ ...f, selected: false }));
+					this.applyPatch(patch);
 					this.updateTask(taskId, { progress: 100, status: 'completed' });
 				} else {
 					const action = await promptCopyOrMove('relocate');
@@ -836,12 +941,12 @@ class CollectionStore {
 
 		try {
 			this.loading = true;
-			const result = await invoke<Omit<FileItem, 'selected'>[]>('relocate_file', {
+			const patch = await invoke<CollectionPatch>('relocate_file', {
 				id,
 				newPath: path,
 				action
 			});
-			this.files = result.map((f) => ({ ...f, selected: false }));
+			this.applyPatch(patch);
 			this.updateTask(taskId, { progress: 100, status: 'completed' });
 		} catch (e) {
 			console.error('Failed to complete relocation', e);
@@ -865,10 +970,8 @@ class CollectionStore {
 
 		try {
 			this.loading = true;
-			const result = await invoke<Omit<FileItem, 'selected'>[]>('remove_file_from_collection', {
-				id
-			});
-			this.files = result.map((f) => ({ ...f, selected: false }));
+			const patch = await invoke<CollectionPatch>('remove_file_from_collection', { id });
+			this.applyPatch(patch);
 			this.updateTask(taskId, { progress: 100, status: 'completed' });
 		} catch (e) {
 			console.error('Failed to remove file from collection', e);
@@ -914,10 +1017,8 @@ class CollectionStore {
 			}
 
 			// 2. Remove from collection (database/UI state)
-			const result = await invoke<Omit<FileItem, 'selected'>[]>('remove_file_from_collection', {
-				id
-			});
-			this.files = result.map((f) => ({ ...f, selected: false }));
+			const patch = await invoke<CollectionPatch>('remove_file_from_collection', { id });
+			this.applyPatch(patch);
 			this.updateTask(taskId, { progress: 100, status: 'completed' });
 		} catch (e) {
 			console.error('Failed to delete file from disk', e);
@@ -930,15 +1031,12 @@ class CollectionStore {
 
 	async removeFile(id: string) {
 		const file = this.files.find((f) => f.id === id);
-		const confirmed = await confirmDialog(
-			`Remove "${file?.filename}" from the collection?`,
-			{
-				title: 'Remove File',
-				kind: 'warning',
-				okLabel: 'Remove',
-				cancelLabel: 'Cancel'
-			}
-		);
+		const confirmed = await confirmDialog(`Remove "${file?.filename}" from the collection?`, {
+			title: 'Remove File',
+			kind: 'warning',
+			okLabel: 'Remove',
+			cancelLabel: 'Cancel'
+		});
 		if (!confirmed) return;
 
 		await this.removeFromCollectionOnly(id);
@@ -1023,16 +1121,9 @@ class CollectionStore {
 	async updateTags(id: string, tags: string[]) {
 		if (this.isLocked(id)) return;
 		try {
-			const updatedItem = await invoke<Omit<FileItem, 'selected'>>('update_file_tags', {
-				id,
-				tags
-			});
-			const index = this.files.findIndex((f) => f.id === id);
-			if (index !== -1) {
-				const selected = this.files[index].selected;
-				this.files[index] = { ...updatedItem, selected };
-				this.notify();
-			}
+			const patch = await invoke<CollectionPatch>('update_file_tags', { id, tags });
+			this.applyPatch(patch);
+			this.notify();
 		} catch (e) {
 			console.error('Failed to update tags', e);
 			throw e;
@@ -1042,25 +1133,48 @@ class CollectionStore {
 	async batchAddTag(ids: string[], tag: string) {
 		const trimmed = tag.trim();
 		if (!trimmed) return;
+		const applicableIds: string[] = [];
 		for (const id of ids) {
 			const file = this.files.find((f) => f.id === id);
 			if (!file || file.missing || this.isLocked(id)) continue;
 			if (!file.tags.includes(trimmed)) {
-				await this.updateTags(id, [...file.tags, trimmed]);
+				applicableIds.push(id);
 			}
+		}
+		if (applicableIds.length === 0) return;
+		try {
+			const patch = await invoke<CollectionPatch>('update_files_tags', {
+				ids: applicableIds,
+				tag: trimmed,
+				add: true
+			});
+			this.applyPatch(patch);
+			this.notify();
+		} catch (e) {
+			console.error('Failed to batch-add tag', e);
 		}
 	}
 
 	async batchRemoveTag(ids: string[], tag: string) {
+		const applicableIds: string[] = [];
 		for (const id of ids) {
 			const file = this.files.find((f) => f.id === id);
 			if (!file || file.missing || this.isLocked(id)) continue;
 			if (file.tags.includes(tag)) {
-				await this.updateTags(
-					id,
-					file.tags.filter((t) => t !== tag)
-				);
+				applicableIds.push(id);
 			}
+		}
+		if (applicableIds.length === 0) return;
+		try {
+			const patch = await invoke<CollectionPatch>('update_files_tags', {
+				ids: applicableIds,
+				tag,
+				add: false
+			});
+			this.applyPatch(patch);
+			this.notify();
+		} catch (e) {
+			console.error('Failed to batch-remove tag', e);
 		}
 	}
 }

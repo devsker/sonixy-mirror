@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { audioPlayer } from '@/lib/audio-player';
 import { collectionStore } from '@/lib/collection-store';
 import { useExternalFileDrag } from '@/lib/use-external-file-drag';
@@ -21,17 +21,19 @@ export default function Waveform({
 	const audioVersion = useStoreVersion(useAudioVersion);
 
 	const svgRef = useRef<SVGSVGElement>(null);
-	const preparedSelectionRef = useRef<string | null>(null);
+	const fullProgressRectRef = useRef<SVGRectElement>(null);
+	const hoverLineRef = useRef<SVGLineElement>(null);
+	const containerRectRef = useRef<{ left: number; width: number }>({ left: 0, width: 1 });
+	const viewBoxWidthRef = useRef(1);
 
 	const [waveformData, setWaveformData] = useState<number[] | null>(null);
 	const [isLoading, setIsLoading] = useState(true);
 	const [dragStartPos, setDragStartPos] = useState<number | null>(null);
 	const [currentPos, setCurrentPos] = useState<number | null>(null);
-	const [hoverPos, setHoverPos] = useState<number | null>(null);
 	const [isDragging, setIsDragging] = useState(false);
 	const [dragClipPath, setDragClipPath] = useState<string | null>(null);
 	const [isPreparingClip, setIsPreparingClip] = useState(false);
-	const [playProgress, setPlayProgress] = useState(0);
+	const [staticPlayProgress, setStaticPlayProgress] = useState(0);
 
 	const progress = collectionStore.waveformProgress[id] || 0;
 	const partialData = collectionStore.partialWaveforms[id] || null;
@@ -71,32 +73,62 @@ export default function Waveform({
 	useEffect(() => {
 		setIsLoading(true);
 		setDragClipPath(null);
-		setPlayProgress(0);
-		preparedSelectionRef.current = null;
+		setStaticPlayProgress(0);
 		audioPlayer.clearSelection();
 		void fetchWaveform();
 	}, [id, fetchWaveform]);
 
+	// Keep the static `staticPlayProgress` React state in sync with the audio player
+	// only when paused / not the active file. The hot rAF path writes directly to
+	// the SVG rect via a ref and bypasses React entirely.
 	useEffect(() => {
 		const isActive = audioPlayer.currentFileId === id;
 		if (!isActive) {
-			setPlayProgress(0);
+			setStaticPlayProgress(0);
+			updateProgressRef(0, false);
 			return;
 		}
 
 		if (!audioPlayer.isPlaying) {
-			setPlayProgress(audioPlayer.smoothProgress);
+			const p = audioPlayer.smoothProgress;
+			setStaticPlayProgress(p);
+			updateProgressRef(p, true);
 			return;
 		}
 
 		let raf = 0;
 		const tick = () => {
-			setPlayProgress(audioPlayer.smoothProgress);
+			updateProgressRef(audioPlayer.smoothProgress, true);
 			raf = requestAnimationFrame(tick);
 		};
 		raf = requestAnimationFrame(tick);
 		return () => cancelAnimationFrame(raf);
 	}, [id, audioVersion]);
+
+	function updateProgressRef(p: number, active: boolean) {
+		const px = p * viewBoxWidthRef.current;
+		if (fullProgressRectRef.current) {
+			fullProgressRectRef.current.setAttribute('width', String(active ? px : 0));
+		}
+	}
+
+	useLayoutEffect(() => {
+		if (!svgRef.current) return;
+		const update = () => {
+			const r = svgRef.current!.getBoundingClientRect();
+			containerRectRef.current = { left: r.left, width: r.width };
+		};
+		update();
+		const ro = new ResizeObserver(update);
+		ro.observe(svgRef.current);
+		window.addEventListener('resize', update);
+		window.addEventListener('scroll', update, true);
+		return () => {
+			ro.disconnect();
+			window.removeEventListener('resize', update);
+			window.removeEventListener('scroll', update, true);
+		};
+	}, []);
 
 	useEffect(() => {
 		const unlistenStarted = listen<string>('waveform-started', (event) => {
@@ -120,15 +152,33 @@ export default function Waveform({
 		[waveformData, partialData]
 	);
 	const barsCount = data.length;
+	const viewBoxWidth = barsCount * 3;
+	viewBoxWidthRef.current = viewBoxWidth;
 
+	// Full waveform path — built ONCE from `data` only.
 	const waveformPath = useMemo(() => {
 		if (data.length === 0) return '';
 		const spacing = 3;
-		let lastIdx = data.length - 1;
-		if (!waveformData && isLoading) {
-			lastIdx = Math.min(data.length - 1, Math.floor(progress * data.length));
+		const topParts: string[] = [];
+		const bottomParts: string[] = [];
+		for (let i = 0; i < data.length; i++) {
+			const x = i * spacing;
+			const h = getBarHeight(data[i]);
+			topParts.push(`${i === 0 ? 'M' : 'L'} ${x},${50 - h / 2} `);
+			bottomParts.push(`L ${x},${50 + h / 2} `);
 		}
+		return topParts.join('') + bottomParts.reverse().join('') + 'Z';
+	}, [data]);
+
+	// Partial waveform path — shown while loading. Independent of `progress` re-renders
+	// because we use it as a static overlay rect width via a ref. React state here is
+	// only updated on generation completion.
+	const partialPath = useMemo(() => {
+		if (waveformData || !isLoading) return '';
+		if (data.length === 0) return '';
+		const lastIdx = Math.min(data.length - 1, Math.floor(progress * data.length));
 		if (lastIdx < 0) return '';
+		const spacing = 3;
 		const topParts: string[] = [];
 		const bottomParts: string[] = [];
 		for (let i = 0; i <= lastIdx; i++) {
@@ -138,18 +188,24 @@ export default function Waveform({
 			bottomParts.push(`L ${x},${50 + h / 2} `);
 		}
 		return topParts.join('') + bottomParts.reverse().join('') + 'Z';
-	}, [data, waveformData, isLoading, progress]);
+		// progress is intentionally NOT a dep — we update via setPartialPath on progress
+		// changes in a separate effect, but for the load-overlay we just sample it.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [data, waveformData, isLoading]);
 
 	const selectionMarkers = useMemo(() => {
 		if (audioPlayer.selectionFileId !== id) {
 			return { in: null as number | null, out: null as number | null };
 		}
 		return { in: audioPlayer.selectionIn, out: audioPlayer.selectionOut };
+		// audioVersion bumps when the audio player state changes — we want the memo
+		// to re-run then even though we read live fields from audioPlayer directly.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [id, audioVersion]);
 
 	const currentSelection = useMemo(() => {
-		if (isDragging && dragStartPos !== null && currentPos !== null && svgRef.current) {
-			const rect = svgRef.current.getBoundingClientRect();
+		if (isDragging && dragStartPos !== null && currentPos !== null) {
+			const rect = containerRectRef.current;
 			const getPct = (x: number) => Math.max(0, Math.min(1, (x - rect.left) / rect.width));
 			const p1 = getPct(dragStartPos);
 			const p2 = getPct(currentPos);
@@ -159,7 +215,11 @@ export default function Waveform({
 			return audioPlayer.selectionRange;
 		}
 		return null;
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [isDragging, dragStartPos, currentPos, id, audioVersion]);
+
+	const selectionRange = audioPlayer.selectionFileId === id ? audioPlayer.selectionRange : null;
+	const selectionKey = selectionRange ? `${selectionRange.start}:${selectionRange.end}` : null;
 
 	const setSelectionDragRef = useExternalFileDrag({
 		disabled: () => !dragClipPath || isPreparingClip,
@@ -167,14 +227,7 @@ export default function Waveform({
 	});
 
 	useEffect(() => {
-		const range =
-			audioPlayer.selectionFileId === id ? audioPlayer.selectionRange : null;
-		const key = range ? `${range.start}:${range.end}` : null;
-
-		if (key === preparedSelectionRef.current) return;
-		preparedSelectionRef.current = key;
-
-		if (!range) {
+		if (!selectionKey) {
 			setDragClipPath(null);
 			return;
 		}
@@ -183,8 +236,8 @@ export default function Waveform({
 		setIsPreparingClip(true);
 		invoke<string>('prepare_drag_clip', {
 			id,
-			startPct: range.start,
-			endPct: range.end
+			startPct: selectionRange!.start,
+			endPct: selectionRange!.end
 		})
 			.then((clipPath) => {
 				if (!cancelled) setDragClipPath(clipPath);
@@ -199,7 +252,7 @@ export default function Waveform({
 		return () => {
 			cancelled = true;
 		};
-	}, [id, audioVersion]);
+	}, [id, selectionKey]);
 
 	function onMouseDown(e: React.MouseEvent) {
 		if (e.button !== 0 || isLocked) return;
@@ -211,21 +264,32 @@ export default function Waveform({
 		setDragClipPath(null);
 	}
 
+	const hoverLineXRef = useRef<number | null>(null);
+
 	function onMouseMove(e: React.MouseEvent) {
-		setHoverPos(e.clientX);
+		const rect = containerRectRef.current;
+		const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+		const xPx = pct * viewBoxWidth;
+		if (hoverLineRef.current) {
+			hoverLineRef.current.setAttribute('x1', String(xPx));
+			hoverLineRef.current.setAttribute('x2', String(xPx));
+			hoverLineRef.current.style.opacity = '1';
+		}
+		hoverLineXRef.current = xPx;
 		if (isDragging) setCurrentPos(e.clientX);
 	}
 
 	function onMouseLeave() {
-		setHoverPos(null);
+		if (hoverLineRef.current) hoverLineRef.current.style.opacity = '0';
+		hoverLineXRef.current = null;
 	}
 
 	async function onMouseUp(e: React.MouseEvent) {
 		if (!isDragging) return;
 		setIsDragging(false);
 		const diff = Math.abs(e.clientX - (dragStartPos || 0));
-		const rect = svgRef.current?.getBoundingClientRect();
-		if (!rect) return;
+		const rect = containerRectRef.current;
+		if (rect.width <= 0) return;
 		const getPct = (x: number) => Math.max(0, Math.min(1, (x - rect.left) / rect.width));
 		if (diff < 5) {
 			if (audioPlayer.currentFileId === id) {
@@ -245,17 +309,7 @@ export default function Waveform({
 	}
 
 	const heightStyle = typeof height === 'number' ? `${height}px` : height;
-	const hoverPct =
-		hoverPos && svgRef.current
-			? Math.max(
-					0,
-					Math.min(
-						1,
-						(hoverPos - svgRef.current.getBoundingClientRect().left) /
-							svgRef.current.getBoundingClientRect().width
-					)
-				)
-			: null;
+	const showFullProgress = !!waveformData && staticPlayProgress > 0;
 
 	return (
 		<div
@@ -270,7 +324,7 @@ export default function Waveform({
 		>
 			<svg
 				ref={svgRef}
-				viewBox={`0 0 ${barsCount * 3} 100`}
+				viewBox={`0 0 ${viewBoxWidth} 100`}
 				preserveAspectRatio="none"
 				className={`waveform-svg${!waveformData && !isLoading ? ' hidden' : ''}${isLocked ? ' locked' : ''}`}
 				onMouseDown={onMouseDown}
@@ -287,21 +341,16 @@ export default function Waveform({
 						<stop offset="50%" stopColor={color} stopOpacity="1" />
 						<stop offset="100%" stopColor={color} stopOpacity="0.7" />
 					</linearGradient>
-					<clipPath id={`progressClip-${id}`}>
-						<rect
-							x="0"
-							y="0"
-							width={audioPlayer.currentFileId === id ? playProgress * barsCount * 3 : 0}
-							height="100"
-						/>
+					<clipPath id={`waveformShapeClip-${id}`}>
+						<path d={waveformPath} />
 					</clipPath>
 				</defs>
 
 				{currentSelection && (
 					<rect
-						x={currentSelection.start * barsCount * 3}
+						x={currentSelection.start * viewBoxWidth}
 						y="0"
-						width={(currentSelection.end - currentSelection.start) * barsCount * 3}
+						width={(currentSelection.end - currentSelection.start) * viewBoxWidth}
 						height="100"
 						fill="var(--selection-color)"
 						fillOpacity="0.1"
@@ -317,19 +366,36 @@ export default function Waveform({
 					/>
 				</g>
 
-				<g clipPath={`url(#progressClip-${id})`}>
-					<path
-						d={waveformPath}
+				{/* Full waveform "played" overlay: rect width is updated by ref, no React re-render.
+				    Clipped to the waveform shape so it only fills the silhouette, not the empty
+				    space above/below the waveform bars. */}
+				<g clipPath={`url(#waveformShapeClip-${id})`}>
+					<rect
+						ref={fullProgressRectRef}
+						x="0"
+						y="0"
+						width={showFullProgress ? staticPlayProgress * viewBoxWidth : 0}
+						height="100"
 						fill={`url(#waveformPlayedGradient-${id})`}
 						className={`waveform-path played${!waveformData && isLoading ? ' no-transition' : ''}`}
+						style={{ pointerEvents: 'none' }}
 					/>
 				</g>
 
+				{/* Partial waveform overlay (shown while loading). */}
+				{!waveformData && isLoading && partialPath && (
+					<path
+						d={partialPath}
+						fill={`url(#waveformPlayedGradient-${id})`}
+						className="waveform-path played no-transition"
+					/>
+				)}
+
 				{selectionMarkers.in !== null && selectionMarkers.out === null && (
 					<line
-						x1={selectionMarkers.in * barsCount * 3}
+						x1={selectionMarkers.in * viewBoxWidth}
 						y1="0"
-						x2={selectionMarkers.in * barsCount * 3}
+						x2={selectionMarkers.in * viewBoxWidth}
 						y2="100"
 						stroke="var(--selection-color)"
 						strokeWidth="2"
@@ -339,9 +405,9 @@ export default function Waveform({
 				)}
 				{selectionMarkers.out !== null && selectionMarkers.in === null && (
 					<line
-						x1={selectionMarkers.out * barsCount * 3}
+						x1={selectionMarkers.out * viewBoxWidth}
 						y1="0"
-						x2={selectionMarkers.out * barsCount * 3}
+						x2={selectionMarkers.out * viewBoxWidth}
 						y2="100"
 						stroke="var(--selection-color)"
 						strokeWidth="2"
@@ -351,25 +417,25 @@ export default function Waveform({
 					/>
 				)}
 
-				{hoverPct !== null && (
-					<line
-						x1={hoverPct * barsCount * 3}
-						y1="0"
-						x2={hoverPct * barsCount * 3}
-						y2="100"
-						stroke="var(--accent-color)"
-						strokeWidth="1.5"
-						pointerEvents="none"
-						className="hover-line"
-					/>
-				)}
+				<line
+					ref={hoverLineRef}
+					x1="0"
+					y1="0"
+					x2="0"
+					y2="100"
+					stroke="var(--accent-color)"
+					strokeWidth="1.5"
+					pointerEvents="none"
+					className="hover-line"
+					style={{ opacity: 0, transition: 'opacity 0.15s' }}
+				/>
 
 				{currentSelection && (
 					<rect
 						ref={setSelectionDragRef}
-						x={currentSelection.start * barsCount * 3}
+						x={currentSelection.start * viewBoxWidth}
 						y="0"
-						width={(currentSelection.end - currentSelection.start) * barsCount * 3}
+						width={(currentSelection.end - currentSelection.start) * viewBoxWidth}
 						height="100"
 						fill="transparent"
 						stroke="var(--selection-color)"
