@@ -781,6 +781,7 @@ class CollectionStore {
 			settingsStore.addRecentCollection(path);
 		} catch (e) {
 			console.error('Failed to open collection', e);
+			settingsStore.removeRecentCollection(path);
 			if (previousPath && !collectionPathsEqual(previousPath, path)) {
 				this.collectionPath = previousPath;
 				try {

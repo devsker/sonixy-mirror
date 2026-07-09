@@ -70,33 +70,44 @@ export default function Sidebar() {
 		collectionPath: string,
 		isActive: boolean
 	) {
-		if (!isActive) return;
 		event.preventDefault();
 		const busy = collectionStore.switchingCollection;
-		showContextMenu(event.clientX, event.clientY, [
-			{
-				label: 'Export library…',
-				action: () => {
-					void collectionStore.exportLibrary();
+
+		if (isActive) {
+			showContextMenu(event.clientX, event.clientY, [
+				{
+					label: 'Export library…',
+					action: () => {
+						void collectionStore.exportLibrary();
+					},
+					disabled: busy || !collectionStore.collectionPath || collectionStore.loading
 				},
-				disabled: busy || !collectionStore.collectionPath || collectionStore.loading
-			},
-			{ separator: true },
-			{
-				label: 'Unload library',
-				action: () => {
-					void collectionStore.unloadLibrary();
+				{ separator: true },
+				{
+					label: 'Unload library',
+					action: () => {
+						void collectionStore.unloadLibrary();
+					},
+					disabled: busy || !collectionStore.collectionPath
 				},
-				disabled: busy || !collectionStore.collectionPath
-			},
-			{
-				label: 'Delete library…',
-				action: () => {
-					void collectionStore.removeLibrary(collectionPath);
-				},
-				disabled: busy
-			}
-		]);
+				{
+					label: 'Delete library…',
+					action: () => {
+						void collectionStore.removeLibrary(collectionPath);
+					},
+					disabled: busy
+				}
+			]);
+		} else {
+			showContextMenu(event.clientX, event.clientY, [
+				{
+					label: 'Remove from list',
+					action: () => {
+						settingsStore.removeRecentCollection(collectionPath);
+					}
+				}
+			]);
+		}
 	}
 
 	return (
