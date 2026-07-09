@@ -5,11 +5,11 @@ pub mod library_archive;
 
 use crate::collection::FileItem;
 use lru::LruCache;
-use uuid::Uuid;
 use rayon::prelude::*;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
 use std::collections::{HashSet, VecDeque};
 use std::io::{BufReader, Cursor, Read, Seek};
+use uuid::Uuid;
 
 /// Trait alias for `Read + Seek + Send + Sync` (the bound rodio's `Decoder`
 /// requires on the boxed reader). Cannot be expressed inline in `Box<dyn>`
@@ -20,7 +20,7 @@ use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 enum TaskType {
     Waveform { normalize: bool },
@@ -307,11 +307,7 @@ fn audio_position_seconds(state: &AudioState) -> f32 {
     // use the same rate the sink is actually playing at, otherwise it drifts
     // from the real audio by the speed factor.
     let speed = audio_playback_speed(state);
-    let pitch_preserved = state
-        .pitch_preserved
-        .lock()
-        .map(|v| *v)
-        .unwrap_or(false);
+    let pitch_preserved = state.pitch_preserved.lock().map(|v| *v).unwrap_or(false);
     let effective_speed = if pitch_preserved { 1.0 } else { speed };
     let Ok(clock) = state.clock.lock() else {
         return 0.0;
@@ -338,19 +334,10 @@ fn sync_audio_position(state: &AudioState) {
             // case). Move the wall-clock contribution into `elapsed` so the
             // next poll adds a fresh delta.
             let speed = audio_playback_speed(state);
-            let pitch_preserved = state
-                .pitch_preserved
-                .lock()
-                .map(|v| *v)
-                .unwrap_or(false);
+            let pitch_preserved = state.pitch_preserved.lock().map(|v| *v).unwrap_or(false);
             let effective_speed = if pitch_preserved { 1.0 } else { speed };
             let position = clock.elapsed.as_secs_f32()
-                + clock
-                    .start
-                    .expect("checked above")
-                    .elapsed()
-                    .as_secs_f32()
-                    * effective_speed;
+                + clock.start.expect("checked above").elapsed().as_secs_f32() * effective_speed;
             clock.elapsed = Duration::from_secs_f32(position);
             clock.start = Some(Instant::now());
         }
@@ -443,7 +430,7 @@ struct CollectionResult {
 }
 
 fn queue_waveform_tasks(
-    folder_path: &PathBuf,
+    folder_path: &Path,
     queue: &Arc<WaveformQueue>,
     items: impl IntoIterator<Item = (String, String)>,
     normalize: bool,
@@ -462,7 +449,7 @@ fn queue_waveform_tasks(
         added_ids.push(id.clone());
         tasks.push_back(WaveformTask {
             id,
-            collection_path: folder_path.clone(),
+            collection_path: folder_path.to_path_buf(),
             relative_path,
             task_type: TaskType::Waveform { normalize },
         });
@@ -475,7 +462,7 @@ fn queue_waveform_tasks(
 }
 
 fn queue_missing_waveforms(
-    folder_path: &PathBuf,
+    folder_path: &Path,
     queue: &Arc<WaveformQueue>,
     normalize: bool,
 ) -> Result<Vec<String>, String> {
@@ -493,17 +480,15 @@ fn queue_missing_waveforms(
         .map_err(|e| e.to_string())?;
 
     let mut missing = Vec::new();
-    for row in missing_iter {
-        if let Ok(item) = row {
-            missing.push(item);
-        }
+    for item in missing_iter.flatten() {
+        missing.push(item);
     }
 
     queue_waveform_tasks(folder_path, queue, missing, normalize)
 }
 
 fn enqueue_post_scan_work(
-    folder_path: &PathBuf,
+    folder_path: &Path,
     conversion_needed: Vec<(String, String)>,
     state: &AppState,
 ) -> Result<(Vec<String>, Vec<String>), String> {
@@ -518,7 +503,7 @@ fn enqueue_post_scan_work(
             conversion_ids.push(id.clone());
             tasks.push_back(WaveformTask {
                 id: id.clone(),
-                collection_path: folder_path.clone(),
+                collection_path: folder_path.to_path_buf(),
                 relative_path,
                 task_type: TaskType::Convert { id },
             });
@@ -908,43 +893,41 @@ fn add_files_blocking(
     let mut conversion_ids = Vec::new();
     let mut waveform_items = Vec::new();
 
-    for item_res in processed_items {
-        if let Ok(item) = item_res {
-            tx.execute(
-                "INSERT OR IGNORE INTO files (id, filename, filepath, format, length, duration, size, tags, gain) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                rusqlite::params![
-                    item.id,
-                    item.filename,
-                    item.filepath,
-                    item.format,
-                    item.length,
-                    item.duration,
-                    item.size,
-                    serde_json::to_string(&item.tags).unwrap_or_else(|_| "[]".to_string()),
-                    item.gain
-                ],
-            ).map_err(|e| e.to_string())?;
+    for item in processed_items.into_iter().flatten() {
+        tx.execute(
+            "INSERT OR IGNORE INTO files (id, filename, filepath, format, length, duration, size, tags, gain) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            rusqlite::params![
+                item.id,
+                item.filename,
+                item.filepath,
+                item.format,
+                item.length,
+                item.duration,
+                item.size,
+                serde_json::to_string(&item.tags).unwrap_or_else(|_| "[]".to_string()),
+                item.gain
+            ],
+        ).map_err(|e| e.to_string())?;
 
-            if tx.changes() == 0 {
-                continue;
-            }
+        if tx.changes() == 0 {
+            continue;
+        }
 
-            added_files.push(item.clone());
+        added_files.push(item.clone());
 
-            let ext = item.format.to_lowercase();
-            if ext == "ogg" || ext == "oga" {
-                conversion_ids.push(item.id.clone());
-                conversion_tasks.push(WaveformTask {
+        let ext = item.format.to_lowercase();
+        if ext == "ogg" || ext == "oga" {
+            conversion_ids.push(item.id.clone());
+            conversion_tasks.push(WaveformTask {
+                id: item.id.clone(),
+                collection_path: folder_path.clone(),
+                relative_path: item.filepath.clone(),
+                task_type: TaskType::Convert {
                     id: item.id.clone(),
-                    collection_path: folder_path.clone(),
-                    relative_path: item.filepath.clone(),
-                    task_type: TaskType::Convert {
-                        id: item.id.clone(),
-                    },
-                });
-            } else {
-                waveform_items.push((item.id.clone(), item.filepath.clone()));
-            }
+                },
+            });
+        } else {
+            waveform_items.push((item.id.clone(), item.filepath.clone()));
         }
     }
     tx.commit().map_err(|e| e.to_string())?;
@@ -1742,7 +1725,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_drag::init())
-        .on_window_event(|window, event| {
+        .on_window_event(|_window, _event| {
             #[cfg(target_os = "macos")]
             if let WindowEvent::CloseRequested { api, .. } = event {
                 let _ = window.hide();
@@ -1781,7 +1764,7 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app_handle, event| {
+        .run(|_app_handle, _event| {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen {
                 has_visible_windows,

@@ -168,7 +168,7 @@ fn export_collection_inner(
             if full.is_file() {
                 paths.push(relative);
             }
-            if scanned % 64 == 0 {
+            if scanned.is_multiple_of(64) {
                 emit_progress(
                     app,
                     PHASE,
@@ -298,7 +298,7 @@ pub fn import_collection(
                 )
             })?;
             extracted += 1;
-            if extracted == 1 || extracted % 8 == 0 {
+            if extracted == 1 || extracted.is_multiple_of(8) {
                 let progress = 0.05 + (0.8 * (1.0 - 1.0 / (extracted as f32 + 4.0)));
                 emit_progress(
                     app,

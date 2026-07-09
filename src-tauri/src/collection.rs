@@ -436,9 +436,8 @@ where
 
     for line in reader.lines() {
         let line = line.map_err(|e| e.to_string())?;
-        if line.starts_with("out_time_ms=") {
+        if let Some(ms_str) = line.strip_prefix("out_time_ms=") {
             if total_duration > 0.0 {
-                let ms_str = &line[12..];
                 if let Ok(ms) = ms_str.parse::<f32>() {
                     let progress = (ms / 1_000_000.0) / total_duration;
                     on_progress(progress.min(1.0));
